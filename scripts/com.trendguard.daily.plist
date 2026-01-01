@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trendguard.daily</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/ruofanwang/trend-guard/scripts/trendguard_daily.sh</string>
+    </array>
+    
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    
+    <key>RunAtLoad</key>
+    <false/>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/ruofanwang/trend-guard/logs/launchd_stdout.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/ruofanwang/trend-guard/logs/launchd_stderr.log</string>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/ruofanwang/trend-guard</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+    
+    <key>KeepAlive</key>
+    <false/>
+    
+    <key>ProcessType</key>
+    <string>Background</string>
+    
+    <key>StandardInPath</key>
+    <string>/dev/null</string>
+    
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>
+

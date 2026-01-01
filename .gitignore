@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# Outputs
+outputs/
+logs/
+
+# Data files (local state)
+data/
+*.json
+*.csv
+
+# Local / secrets
+.env
+.env.local
+
+# OS
+.DS_Store
