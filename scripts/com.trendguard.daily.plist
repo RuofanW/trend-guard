@@ -11,8 +11,15 @@
         <string>/Users/ruofanwang/trend-guard/scripts/trendguard_daily.sh</string>
     </array>
     
-    <key>StartInterval</key>
-    <integer>3600</integer>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>12</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+        <key>TimeZone</key>
+        <string>America/Los_Angeles</string>
+    </dict>
     
     <key>RunAtLoad</key>
     <false/>
@@ -43,6 +50,15 @@
     
     <key>ThrottleInterval</key>
     <integer>10</integer>
+    
+    <key>LowPriorityIO</key>
+    <true/>
+    
+    <key>Nice</key>
+    <integer>1</integer>
+    
+    <key>AbandonProcessGroup</key>
+    <true/>
 </dict>
 </plist>
 

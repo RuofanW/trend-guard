@@ -53,7 +53,7 @@ launchctl load "$TEMP_PLIST"
 if launchctl list | grep -q "com.trendguard.daily"; then
     echo "✓ Job loaded successfully!"
     echo ""
-    echo "Schedule: Every hour (3600 seconds)"
+    echo "Schedule: Daily at 12:15 PM PST"
     echo ""
     echo "To check status:"
     echo "  launchctl list | grep trendguard"
