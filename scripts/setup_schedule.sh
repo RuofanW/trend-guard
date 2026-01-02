@@ -29,14 +29,11 @@ echo "✓ Made trendguard_daily.sh executable"
 mkdir -p logs
 echo "✓ Created logs directory"
 
-# Copy plist to LaunchAgents (update path in plist first)
+# Copy plist to LaunchAgents
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 mkdir -p "$LAUNCH_AGENTS_DIR"
-
-# Create a temporary plist with updated path
 TEMP_PLIST="$LAUNCH_AGENTS_DIR/com.trendguard.daily.plist"
-sed "s|/Users/ruofanwang/Documents/Trading/trend-guard|$PROJECT_ROOT|g" \
-    scripts/com.trendguard.daily.plist > "$TEMP_PLIST"
+cp scripts/com.trendguard.daily.plist "$TEMP_PLIST"
 echo "✓ Copied plist to $LAUNCH_AGENTS_DIR"
 
 # Unload if already loaded

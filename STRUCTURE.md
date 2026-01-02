@@ -23,12 +23,15 @@ trend-guard/
 │
 ├── docs/                         # Documentation
 │   ├── SCHEDULING.md            # Scheduling setup guide
-│   └── TROUBLESHOOTING.md       # Troubleshooting guide
+│   ├── TROUBLESHOOTING.md       # Troubleshooting guide
+│   ├── TRADING_LOGIC_V2.3.md   # Trading Logic v2.3 guide
+│   └── TRADE_LOGIC_V2.3_REVIEW.md  # v2.3 review & answers
 │
 ├── outputs/                      # Generated outputs (date-stamped)
 │   └── YYYY-MM-DD/              # Daily output folders
-│       ├── entry_candidates.csv
-│       ├── manage_positions.csv
+│       ├── selection_candidates.csv  # v2.3: Selection watchlist
+│       ├── entry_candidates.csv      # Backward compat
+│       ├── manage_positions.csv      # Position management
 │       ├── holdings_snapshot.csv
 │       └── report.html
 │
@@ -38,7 +41,7 @@ trend-guard/
 │   └── launchd_stderr.log
 │
 └── data/                         # Data files (gitignored)
-    ├── state.json               # State persistence (EMA21 timers, core flags)
+    ├── state.json               # State: trades (v2.3 STRONG/NORMAL), reclaim timers
     └── robinhood_holdings.csv   # CSV fallback for holdings
 ```
 

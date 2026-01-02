@@ -32,59 +32,69 @@ def telegram_send(text: str) -> None:
 
 def build_summary(out_dir: str) -> str:
     """
-    Summarize outputs/YYYY-MM-DD/{entry_candidates.csv, manage_positions.csv, report.html}
+    Summarize outputs/YYYY-MM-DD/{watchlist.csv, trade_actions.csv, trades_state.csv}
     into a short Telegram-friendly message.
     """
-    entry_path = os.path.join(out_dir, "entry_candidates.csv")
-    manage_path = os.path.join(out_dir, "manage_positions.csv")
+    watchlist_path = os.path.join(out_dir, "watchlist.csv")
+    actions_path = os.path.join(out_dir, "trade_actions.csv")
+    trades_state_path = os.path.join(out_dir, "trades_state.csv")
 
     lines = []
     date_str = os.path.basename(out_dir.rstrip("/"))
     lines.append(f"📈 Trend-Guard Report — {date_str}")
 
-    # Entry summary
-    if os.path.exists(entry_path):
-        entry = pd.read_csv(entry_path)
-        n = len(entry)
+    # Watchlist summary
+    if os.path.exists(watchlist_path):
+        watchlist = pd.read_csv(watchlist_path)
+        n = len(watchlist)
         if n == 0:
-            lines.append("• Entry: 0 candidates")
+            lines.append("• Watchlist: 0 candidates")
         else:
-            top_syms = entry["symbol"].head(8).tolist() if "symbol" in entry.columns else []
-            lines.append(f"• Entry: {n} candidates | Top: {', '.join(top_syms)}")
+            top_syms = watchlist["symbol"].head(8).tolist() if "symbol" in watchlist.columns else []
+            lines.append(f"• Watchlist: {n} candidates | Top: {', '.join(top_syms)}")
     else:
-        lines.append("• Entry: (missing entry_candidates.csv)")
+        lines.append("• Watchlist: (missing watchlist.csv)")
 
-    # Manage summary
-    if os.path.exists(manage_path):
-        manage = pd.read_csv(manage_path)
-        if "bucket" in manage.columns:
-            counts = manage["bucket"].value_counts().to_dict()
-            core = counts.get("CORE", 0)
-            trade = counts.get("TRADE", 0)
-            spec = counts.get("SPEC", 0)
-            unk = counts.get("UNKNOWN", 0)
-            lines.append(f"• Holdings buckets: CORE {core} | TRADE {trade} | SPEC {spec} | UNKNOWN {unk}")
+    # Trades state summary
+    if os.path.exists(trades_state_path):
+        trades_state = pd.read_csv(trades_state_path)
+        if "type" in trades_state.columns:
+            type_counts = trades_state["type"].value_counts().to_dict()
+            strong = type_counts.get("STRONG", 0)
+            normal = type_counts.get("NORMAL", 0)
+            lines.append(f"• Trades: STRONG {strong} | NORMAL {normal} | Total {len(trades_state)}")
         else:
-            lines.append("• Holdings: (bucket col missing)")
-
-        # Highlight warnings/exits
-        if "notes" in manage.columns and "symbol" in manage.columns:
-            notes = manage[["symbol", "notes"]].astype(str)
-            # crude but practical keyword filter
-            flagged = notes[notes["notes"].str.contains("EXIT|WARNING|FAILED|REMINDER", case=False, na=False)]
-            if not flagged.empty:
-                head = flagged.head(8)
-                lines.append("⚠️ Alerts (top):")
-                for _, r in head.iterrows():
-                    s = r["symbol"]
-                    msg = r["notes"]
-                    # keep message short
-                    msg = msg.split("|")[0].strip()
-                    lines.append(f"  - {s}: {msg}")
-            else:
-                lines.append("• Alerts: none")
+            lines.append(f"• Trades: {len(trades_state)} positions")
     else:
-        lines.append("• Holdings: (missing manage_positions.csv)")
+        lines.append("• Trades: (missing trades_state.csv)")
+
+    # Actions summary (alerts)
+    if os.path.exists(actions_path):
+        actions = pd.read_csv(actions_path)
+        # Highlight exits and upgrades/downgrades
+        if "action" in actions.columns and "symbol" in actions.columns:
+            exits = actions[actions["action"] == "EXIT"]
+            upgrades = actions[actions["action"] == "UPGRADE_TO_STRONG"]
+            downgrades = actions[actions["action"] == "DOWNGRADE_TO_NORMAL"]
+            enters = actions[actions["action"] == "ENTER"]
+            
+            if not exits.empty:
+                exit_syms = exits["symbol"].head(5).tolist()
+                lines.append(f"⚠️ Exits: {', '.join(exit_syms)}{'...' if len(exits) > 5 else ''}")
+            if not upgrades.empty:
+                upgrade_syms = upgrades["symbol"].head(3).tolist()
+                lines.append(f"⬆️ Upgrades: {', '.join(upgrade_syms)}")
+            if not downgrades.empty:
+                downgrade_syms = downgrades["symbol"].head(3).tolist()
+                lines.append(f"⬇️ Downgrades: {', '.join(downgrade_syms)}")
+            if not enters.empty:
+                enter_syms = enters["symbol"].head(3).tolist()
+                lines.append(f"➕ Entries: {', '.join(enter_syms)}")
+            
+            if exits.empty and upgrades.empty and downgrades.empty and enters.empty:
+                lines.append("• Actions: none (all HOLD)")
+    else:
+        lines.append("• Actions: (missing trade_actions.csv)")
 
     # Optional report link
     base = _env("REPORT_BASE_URL")
