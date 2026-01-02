@@ -72,4 +72,3 @@ log "=== Daily pipeline completed ==="
 find "$LOG_DIR" -name "daily_*.log" -mtime +30 -delete 2>/dev/null || true
 
 exit 0
-

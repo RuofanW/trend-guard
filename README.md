@@ -68,11 +68,19 @@ Daily outputs are saved in `outputs/YYYY-MM-DD/`:
 
 ## Trading Strategy
 
+**Key Assumptions:**
+- Designed for **individual trader usage** (not institutional)
+- Operates on a **daily basis** (end-of-day signals)
+- **Workflow**: Run script before market close → review signals → execute trades right after market close
+- All signals are based on **closing prices** and **end-of-day indicators**
+
+**Position Management (3 Buckets):**
 - **CORE**: Long-term holdings, exit on 2 consecutive closes below MA50
 - **TRADE**: Medium-term positions, 3-day EMA21 reclaim timer
 - **SPEC**: Speculative positions, tight ATR-based stops
 
-Entry signals:
-- Pullback reclaim: Price crosses above EMA21 while above MA50
-- Consolidation breakout: Breaks 20-day high after tight consolidation
+**Entry Signals:**
+- **Pullback reclaim**: Price crosses above EMA21 while above MA50
+- **Consolidation breakout**: Breaks 20-day high after tight consolidation (max 12% range over 15 days)
+- Must pass strict filters: positive MA50 slope, close/MA50 ≤ 1.25, ATR% ≤ 12%
 
