@@ -469,6 +469,9 @@ class FeatureRow:
     atr_pct: float
     close_over_ma50: float
     range_pct_15d: float
+    
+    recent_dip_from_20d_high: bool
+    volume_ratio: float
 
 
 def compute_features(
@@ -479,6 +482,10 @@ def compute_features(
     breakout_lookback: int,
     consolidation_days: int,
     consolidation_max_range_pct: float,
+    dip_min_pct: float = 0.06,
+    dip_max_pct: float = 0.12,
+    dip_lookback_days: int = 12,
+    dip_rebound_window: int = 5,
 ) -> Optional[FeatureRow]:
     df = df.dropna().copy()
     need_min = max(ma_len, ema_len, atr_len, breakout_lookback, consolidation_days) + 15
@@ -491,6 +498,10 @@ def compute_features(
     df["AVG_DVOL20"] = (df["Close"] * df["Volume"]).rolling(20).mean()
 
     df["HHN"] = df["High"].rolling(breakout_lookback).max().shift(1)
+    
+    # Compute 20-day high for dip check
+    df["HIGH20"] = df["High"].rolling(20).max()
+    df["AVG_VOL20"] = df["Volume"].rolling(20).mean()
 
     hi_m = df["High"].rolling(consolidation_days).max()
     lo_m = df["Low"].rolling(consolidation_days).min()
@@ -521,6 +532,33 @@ def compute_features(
 
     atr_pct = float(atr14v / close) if close > 0 and np.isfinite(atr14v) else float("nan")
     close_over_ma50 = float(close / ma50) if ma50 > 0 and np.isfinite(ma50) else float("nan")
+    
+    # Check for recent dip from high using pullback depth computation
+    recent_dip_from_20d_high = False
+    if len(df) >= dip_lookback_days + dip_rebound_window:
+        # Compute pullback depth for each day using the lookback window
+        pullback_depths = compute_pullback_depth_after_high(df["Close"], df["High"], df["Low"], dip_lookback_days)
+        
+        # Check the last dip_rebound_window days (excluding today) for qualifying dips
+        # A qualifying dip means:
+        # 1. Pullback depth is between dip_min_pct and dip_max_pct
+        # 2. The dip occurred within dip_rebound_window days (so entry trigger is timely)
+        recent_window = pullback_depths.iloc[-(dip_rebound_window + 1):]  # Last N days
+        
+        for depth_date, depth_val in recent_window.items():
+            if np.isfinite(depth_val) and dip_min_pct <= depth_val <= dip_max_pct:
+                # Found a qualifying dip depth - check timing
+                depth_idx = df.index.get_loc(depth_date)
+                days_since_dip = len(df) - 1 - depth_idx
+                # The dip depth is computed for day depth_date, and today is within rebound window
+                if 0 <= days_since_dip <= dip_rebound_window:
+                    recent_dip_from_20d_high = True
+                    break
+       
+    # Compute volume ratio: entry day volume / 20-day average volume
+    curr_volume = float(curr["Volume"]) if np.isfinite(curr["Volume"]) else 0.0
+    avg_vol20 = float(curr["AVG_VOL20"]) if np.isfinite(curr["AVG_VOL20"]) and curr["AVG_VOL20"] > 0 else float("nan")
+    volume_ratio = float(curr_volume / avg_vol20) if np.isfinite(avg_vol20) and avg_vol20 > 0 else float("nan")
 
     return FeatureRow(
         symbol="",
@@ -542,6 +580,8 @@ def compute_features(
         atr_pct=atr_pct,
         close_over_ma50=close_over_ma50,
         range_pct_15d=range_pct_15d,
+        recent_dip_from_20d_high=recent_dip_from_20d_high,
+        volume_ratio=volume_ratio,
     )
 
 
@@ -565,13 +605,37 @@ def trade_entry_signals(f: FeatureRow) -> Tuple[bool, bool, str]:
     return pullback_reclaim, consolidation_breakout, ", ".join(reasons)
 
 
-def passes_strict_trade_filters(f: FeatureRow, max_close_over_ma50: float, max_atr_pct: float) -> bool:
+def passes_strict_trade_filters(f: FeatureRow, max_close_over_ma50: float, max_atr_pct: float,
+                                min_volume_ratio: float = 1.5,
+                                filter_stats: Optional[Dict] = None) -> bool:
+    """
+    Check if feature row passes all strict trade filters.
+    Optionally updates filter_stats dict to track which filters reject candidates.
+    """
     if not np.isfinite(f.ma50_slope_10d) or f.ma50_slope_10d <= 0:
+        if filter_stats is not None:
+            filter_stats["rejected_ma50_slope"] = filter_stats.get("rejected_ma50_slope", 0) + 1
         return False
     if not np.isfinite(f.close_over_ma50) or f.close_over_ma50 > max_close_over_ma50:
+        if filter_stats is not None:
+            filter_stats["rejected_close_over_ma50"] = filter_stats.get("rejected_close_over_ma50", 0) + 1
         return False
     if not np.isfinite(f.atr_pct) or f.atr_pct > max_atr_pct:
+        if filter_stats is not None:
+            filter_stats["rejected_atr_pct"] = filter_stats.get("rejected_atr_pct", 0) + 1
         return False
+    # Entry must follow a recent dip from the 20-day high within the last 10-15 days
+    if not f.recent_dip_from_20d_high:
+        if filter_stats is not None:
+            filter_stats["rejected_recent_dip"] = filter_stats.get("rejected_recent_dip", 0) + 1
+        return False
+    # Entry day volume ≥ min_volume_ratio x the 20-day average volume
+    if not np.isfinite(f.volume_ratio) or f.volume_ratio < min_volume_ratio:
+        if filter_stats is not None:
+            filter_stats["rejected_volume_ratio"] = filter_stats.get("rejected_volume_ratio", 0) + 1
+        return False
+    if filter_stats is not None:
+        filter_stats["passed_all_filters"] = filter_stats.get("passed_all_filters", 0) + 1
     return True
 
 
@@ -591,6 +655,34 @@ def entry_score(f: FeatureRow) -> float:
     slope = f.ma50_slope_10d / max(f.ma50, 1e-6)
 
     return float(2.0 * liquidity + 200.0 * tightness + 10.0 * extension + 50.0 * slope)
+
+
+def compute_pullback_depth_after_high(close: pd.Series, high: pd.Series, low: pd.Series, W: int) -> pd.Series:
+    """
+    For each day t (t>=W-1):
+      - Look at the last W days
+      - Find the first occurrence of the maximum HIGH price in that window (local high)
+      - Compute pullback depth from that high to the minimum LOW price AFTER that high within the window
+        pullback_depth = (H - L_after) / H
+    Returns a Series aligned to close index, with NaN for early rows.
+    """
+    h = high.to_numpy(dtype=float)
+    l = low.to_numpy(dtype=float)
+    out = np.full(len(close), np.nan, dtype=float)
+
+    for i in range(W - 1, len(close)):
+        # Get the window of high prices
+        high_window = h[i - W + 1 : i + 1]
+        h_idx = int(np.argmax(high_window))         # first max high in window
+        H = high_window[h_idx]
+        if H <= 0:
+            continue
+        # Get the window of low prices after the high (including the high day)
+        low_window_after_high = l[i - W + 1 + h_idx : i + 1]
+        L_after = np.min(low_window_after_high)       # min low after the high (incl high day)
+        out[i] = (H - L_after) / H
+
+    return pd.Series(out, index=close.index)
 
 
 # -------------------------
@@ -704,6 +796,11 @@ def main():
     entry_top_n = int(cfg.get("entry_top_n", 15))
     strict_max_close_over_ma50 = float(cfg.get("strict_max_close_over_ma50", 1.25))
     strict_max_atr_pct = float(cfg.get("strict_max_atr_pct", 0.12))
+    dip_min_pct = float(cfg.get("dip_min_pct", 0.06))  # Default 6%
+    dip_max_pct = float(cfg.get("dip_max_pct", 0.12))  # Default 12%
+    dip_lookback_days = int(cfg.get("dip_lookback_days", 12))  # Default 12 days
+    dip_rebound_window = int(cfg.get("dip_rebound_window", 5))  # Default 5 days
+    min_volume_ratio = float(cfg.get("min_volume_ratio", 1.5))  # Default 1.5x
 
     # state
     state = load_json(STATE_FILE, default={"reclaim_watch": {}, "prev_flags": {}})
@@ -778,6 +875,19 @@ def main():
     entry_rows = []
     manage_rows = []
     features_map: Dict[str, FeatureRow] = {}
+    
+    # Filter statistics for tracking
+    filter_stats = {
+        "evaluated": 0,
+        "passed_prescreen": 0,
+        "had_entry_signal": 0,
+        "rejected_ma50_slope": 0,
+        "rejected_close_over_ma50": 0,
+        "rejected_atr_pct": 0,
+        "rejected_recent_dip": 0,
+        "rejected_volume_ratio": 0,
+        "passed_all_filters": 0,
+    }
 
     print("\nStage 2: compute entry signals & manage holdings ...")
     batch_num = 0
@@ -798,16 +908,23 @@ def main():
                 breakout_lookback,
                 consolidation_days,
                 consolidation_max_range_pct,
+                dip_min_pct,
+                dip_max_pct,
+                dip_lookback_days,
+                dip_rebound_window,
             )
             if f is None:
                 continue
+            filter_stats["evaluated"] += 1
             f.symbol = sym
             features_map[sym] = f
 
             if prescreen_pass(f.close, f.avg_dollar_vol_20d, min_price, min_avg_dvol):
+                filter_stats["passed_prescreen"] += 1
                 pr, cb, why = trade_entry_signals(f)
                 if pr or cb:
-                    if passes_strict_trade_filters(f, strict_max_close_over_ma50, strict_max_atr_pct):
+                    filter_stats["had_entry_signal"] += 1
+                    if passes_strict_trade_filters(f, strict_max_close_over_ma50, strict_max_atr_pct, min_volume_ratio, filter_stats):
                         entry_rows.append(
                             {
                                 "symbol": sym,
@@ -821,6 +938,8 @@ def main():
                                 "close_over_ma50": f.close_over_ma50,
                                 "ma50_slope_10d": f.ma50_slope_10d,
                                 "range_pct_15d": f.range_pct_15d,
+                                "recent_dip_from_20d_high": f.recent_dip_from_20d_high,
+                                "volume_ratio": f.volume_ratio,
                                 "signal_pullback_reclaim": pr,
                                 "signal_consolidation_breakout": cb,
                                 "reasons": why,
@@ -830,9 +949,25 @@ def main():
 
         time.sleep(sleep_sec)
 
+    # Print filter statistics
+    print(f"\nStage 2 filter statistics:")
+    print(f"  Evaluated (features computed): {filter_stats['evaluated']}")
+    print(f"  Passed prescreen: {filter_stats['passed_prescreen']}")
+    print(f"  Had entry signal (pullback_reclaim or consolidation_breakout): {filter_stats['had_entry_signal']}")
+    print(f"\n  Filter rejections (for candidates with entry signals):")
+    print(f"    MA50 slope <= 0: {filter_stats['rejected_ma50_slope']}")
+    print(f"    Close/MA50 > {strict_max_close_over_ma50}: {filter_stats['rejected_close_over_ma50']}")
+    print(f"    ATR% > {strict_max_atr_pct}: {filter_stats['rejected_atr_pct']}")
+    print(f"    No recent dip ({dip_min_pct*100:.0f}-{dip_max_pct*100:.0f}% from 20d high): {filter_stats['rejected_recent_dip']}")
+    print(f"    Volume ratio < {min_volume_ratio}x: {filter_stats['rejected_volume_ratio']}")
+    print(f"\n  Passed all filters: {filter_stats['passed_all_filters']}")
+
     entry_df = pd.DataFrame(entry_rows)
+    total_ranked = len(entry_df)
     if not entry_df.empty:
         entry_df = entry_df.sort_values(by="score", ascending=False).head(entry_top_n)
+    
+    print(f"\n  Final entry candidates: {len(entry_df)} (from {total_ranked} ranked, top {entry_top_n} selected)")
 
     entry_df.to_csv(out_entry, index=False)
 

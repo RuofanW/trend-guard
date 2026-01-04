@@ -14,7 +14,11 @@
     "breakout_lookback": 20,
     "consolidation_days": 15,
     "consolidation_max_range_pct": 0.12,
-  
+    "dip_min_pct": 0.05,
+    "dip_max_pct": 0.12,
+    "dip_lookback_days": 12,
+    "dip_rebound_window": 5,
+
     "universe_stage1_days": 90,
     "universe_stage2_days": 260,
   
@@ -26,6 +30,9 @@
     "strict_max_close_over_ma50": 1.25,
     "strict_max_atr_pct": 0.12,
     "scan_universe": true,
+    "max_universe_symbols": 0,
+
+    "min_volume_ratio": 1.25,
   
     "holdings_csv": "robinhood_holdings.csv"
 }

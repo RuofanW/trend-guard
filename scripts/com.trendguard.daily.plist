@@ -11,15 +11,9 @@
         <string>/Users/ruofanwang/trend-guard/scripts/trendguard_daily.sh</string>
     </array>
     
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>12</integer>
-        <key>Minute</key>
-        <integer>15</integer>
-        <key>TimeZone</key>
-        <string>America/Los_Angeles</string>
-    </dict>
+    <key>StartInterval</key>
+    <integer>14400</integer>
+    <!-- Run every 4 hours (4 * 60 * 60 = 14400 seconds) -->
     
     <key>RunAtLoad</key>
     <false/>
