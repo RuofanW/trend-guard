@@ -1,0 +1,31 @@
+{
+    "core": ["NVDA", "META", "AVGO", "GOOG"],
+    "spec": ["CRWV", "CRCL"],
+  
+    "min_price": 8.0,
+    "min_avg_dollar_vol_20d": 20000000,
+  
+    "ma_len": 50,
+    "ema_len": 21,
+    "atr_len": 14,
+  
+    "reclaim_days": 3,
+  
+    "breakout_lookback": 20,
+    "consolidation_days": 15,
+    "consolidation_max_range_pct": 0.12,
+  
+    "universe_stage1_days": 90,
+    "universe_stage2_days": 260,
+  
+    "max_candidates_stage2": 800,
+    "chunk_size": 50,
+    "sleep_between_chunks_sec": 3.0,
+  
+    "entry_top_n": 15,
+    "strict_max_close_over_ma50": 1.25,
+    "strict_max_atr_pct": 0.12,
+    "scan_universe": true,
+  
+    "holdings_csv": "robinhood_holdings.csv"
+}

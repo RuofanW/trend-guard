@@ -766,6 +766,11 @@ def main():
         if s not in stage1_pass:
             stage1_pass.append(s)
 
+    # Ensure CORE symbols are always included in Stage 2    
+    for s in core_set:
+        if s not in stage1_pass:
+            stage1_pass.append(s)
+
     # -------------------------
     # Stage 2: compute entry signals + manage holdings
     # -------------------------
