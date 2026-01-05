@@ -78,7 +78,9 @@ This happens when the scanner runs but finds no entry candidates (all filters ar
 - Lower `entry_top_n` threshold (if you want fewer, but more selective)
 - Adjust `strict_max_close_over_ma50` (increase from 1.25 to 1.30)
 - Adjust `strict_max_atr_pct` (increase from 0.12 to 0.15)
-- Lower `dip_threshold_pct` (e.g., from 0.05 to 0.03 for 3% dip requirement)
+- Lower `dip_min_pct` (e.g., from 0.06 to 0.03 for 3% minimum dip requirement)
+- Increase `dip_max_pct` (e.g., from 0.12 to 0.15 for wider dip range)
+- Lower `min_volume_ratio` (e.g., from 1.5 to 1.25 for less strict volume requirement)
 - Check if `scan_universe` is set to `true` (if false, only scans your holdings)
 
 ## Checking Scheduled Job Execution History

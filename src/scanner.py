@@ -181,7 +181,7 @@ def _rh_login_and_verify(rh, username: str, password: str, mfa_code: Optional[st
 def load_holdings_from_robinhood(date_str: str) -> List[str]:
     """
     Uses robin_stocks to login and fetch current equity positions.
-    Returns tickers (uppercased; '.' converted to '-' for yfinance).
+    Returns tickers (uppercased; '.' converted to '-').
     Saves a CSV snapshot of holdings for the given date (overwrites if exists).
     """
     try:
@@ -421,8 +421,6 @@ def download_daily_batch(
             print(f"  Failed to download batch after {max_retries} attempts: {e}")
             print(f"  Symbols in failed batch: {symbols[:10]}{'...' if len(symbols) > 10 else ''}")
             return out
-
-    return out
 
 
 # -------------------------

@@ -81,7 +81,9 @@ Daily outputs are saved in `outputs/YYYY-MM-DD/`:
 - **SPEC**: Speculative positions, tight ATR-based stops
 
 **Entry Signals (TRADE bucket):**
-- **Pullback reclaim**: Price crosses above EMA21 while above MA50
+- **Pullback reclaim**: 
+  - Price crosses above EMA21 while above MA50, OR
+  - Close < EMA21 on day before yesterday AND cross up EMA21 today
 - **Consolidation breakout**: Breaks 20-day high after tight consolidation (max 12% range over 15 days)
 - **Recent dip requirement**: 
   - Stock must have dipped by 6-12% from its 20-day high
@@ -92,4 +94,5 @@ Daily outputs are saved in `outputs/YYYY-MM-DD/`:
   - Positive MA50 slope (10-day)
   - Close/MA50 ≤ 1.25
   - ATR% ≤ 12%
+  - Exclude if open ≥ close in all of the last 3 trading days
 
