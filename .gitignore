@@ -9,6 +9,7 @@ logs/
 # Data files (local state)
 data/
 *.json
+!config/config.json
 *.csv
 
 # Local / secrets

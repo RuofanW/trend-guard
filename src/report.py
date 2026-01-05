@@ -11,8 +11,12 @@ import plotly.graph_objects as go
 def _safe_read_csv(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
         return pd.DataFrame()
-    df = pd.read_csv(path)
-    return df if df is not None else pd.DataFrame()
+    try:
+        df = pd.read_csv(path)
+        return df if df is not None else pd.DataFrame()
+    except (pd.errors.EmptyDataError, ValueError):
+        # Handle empty CSV files (no data rows, possibly just headers)
+        return pd.DataFrame()
 
 def make_report(out_dir: str) -> str:
     out_dir = str(out_dir)

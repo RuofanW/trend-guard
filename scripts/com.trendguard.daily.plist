@@ -17,8 +17,6 @@
         <integer>12</integer>
         <key>Minute</key>
         <integer>15</integer>
-        <key>TimeZone</key>
-        <string>America/Los_Angeles</string>
     </dict>
     
     <key>RunAtLoad</key>

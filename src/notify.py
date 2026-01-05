@@ -44,45 +44,51 @@ def build_summary(out_dir: str) -> str:
 
     # Entry summary
     if os.path.exists(entry_path):
-        entry = pd.read_csv(entry_path)
-        n = len(entry)
-        if n == 0:
-            lines.append("• Entry: 0 candidates")
-        else:
-            top_syms = entry["symbol"].head(8).tolist() if "symbol" in entry.columns else []
-            lines.append(f"• Entry: {n} candidates | Top: {', '.join(top_syms)}")
+        try:
+            entry = pd.read_csv(entry_path)
+            n = len(entry)
+            if n == 0:
+                lines.append("• Entry: 0 candidates")
+            else:
+                top_syms = entry["symbol"].head(8).tolist() if "symbol" in entry.columns else []
+                lines.append(f"• Entry: {n} candidates | Top: {', '.join(top_syms)}")
+        except (pd.errors.EmptyDataError, ValueError):
+            lines.append("• Entry: 0 candidates (empty file)")
     else:
         lines.append("• Entry: (missing entry_candidates.csv)")
 
     # Manage summary
     if os.path.exists(manage_path):
-        manage = pd.read_csv(manage_path)
-        if "bucket" in manage.columns:
-            counts = manage["bucket"].value_counts().to_dict()
-            core = counts.get("CORE", 0)
-            trade = counts.get("TRADE", 0)
-            spec = counts.get("SPEC", 0)
-            unk = counts.get("UNKNOWN", 0)
-            lines.append(f"• Holdings buckets: CORE {core} | TRADE {trade} | SPEC {spec} | UNKNOWN {unk}")
-        else:
-            lines.append("• Holdings: (bucket col missing)")
-
-        # Highlight warnings/exits
-        if "notes" in manage.columns and "symbol" in manage.columns:
-            notes = manage[["symbol", "notes"]].astype(str)
-            # crude but practical keyword filter
-            flagged = notes[notes["notes"].str.contains("EXIT|WARNING|FAILED|REMINDER", case=False, na=False)]
-            if not flagged.empty:
-                head = flagged.head(8)
-                lines.append("⚠️ Alerts (top):")
-                for _, r in head.iterrows():
-                    s = r["symbol"]
-                    msg = r["notes"]
-                    # keep message short
-                    msg = msg.split("|")[0].strip()
-                    lines.append(f"  - {s}: {msg}")
+        try:
+            manage = pd.read_csv(manage_path)
+            if "bucket" in manage.columns:
+                counts = manage["bucket"].value_counts().to_dict()
+                core = counts.get("CORE", 0)
+                trade = counts.get("TRADE", 0)
+                spec = counts.get("SPEC", 0)
+                unk = counts.get("UNKNOWN", 0)
+                lines.append(f"• Holdings buckets: CORE {core} | TRADE {trade} | SPEC {spec} | UNKNOWN {unk}")
             else:
-                lines.append("• Alerts: none")
+                lines.append("• Holdings: (bucket col missing)")
+
+            # Highlight warnings/exits
+            if "notes" in manage.columns and "symbol" in manage.columns:
+                notes = manage[["symbol", "notes"]].astype(str)
+                # crude but practical keyword filter
+                flagged = notes[notes["notes"].str.contains("EXIT|WARNING|FAILED|REMINDER", case=False, na=False)]
+                if not flagged.empty:
+                    head = flagged.head(8)
+                    lines.append("⚠️ Alerts (top):")
+                    for _, r in head.iterrows():
+                        s = r["symbol"]
+                        msg = r["notes"]
+                        # keep message short
+                        msg = msg.split("|")[0].strip()
+                        lines.append(f"  - {s}: {msg}")
+                else:
+                    lines.append("• Alerts: none")
+        except (pd.errors.EmptyDataError, ValueError):
+            lines.append("• Holdings: (empty manage_positions.csv)")
     else:
         lines.append("• Holdings: (missing manage_positions.csv)")
 

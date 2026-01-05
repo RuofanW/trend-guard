@@ -63,6 +63,24 @@ rh.login(username="your_username", password="your_password")
 
 If this also hangs, the issue is with robin_stocks/your Robinhood account settings.
 
+## Empty CSV Files / "No columns to parse" Error
+
+If you see errors like:
+```
+pandas.errors.EmptyDataError: No columns to parse from file
+```
+
+This happens when the scanner runs but finds no entry candidates (all filters are too strict, or market conditions don't meet criteria).
+
+**This is normal behavior** - the script now handles empty CSV files gracefully. The report and notifications will show "0 candidates" instead of crashing.
+
+**To get more candidates:**
+- Lower `entry_top_n` threshold (if you want fewer, but more selective)
+- Adjust `strict_max_close_over_ma50` (increase from 1.25 to 1.30)
+- Adjust `strict_max_atr_pct` (increase from 0.12 to 0.15)
+- Lower `dip_threshold_pct` (e.g., from 0.05 to 0.03 for 3% dip requirement)
+- Check if `scan_universe` is set to `true` (if false, only scans your holdings)
+
 ## Checking Scheduled Job Execution History
 
 ### View Daily Execution Logs

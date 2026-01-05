@@ -36,6 +36,7 @@ Edit `config/config.json`:
 - Set your `core` and `spec` ticker lists
 - Adjust filters (min_price, min_avg_dollar_vol_20d, etc.)
 - Set `entry_top_n` to limit candidates
+- Configure `dip_min_pct` (default 0.06 = 6%) and `dip_max_pct` (default 0.12 = 12%) for entry dip range
 
 ### 4. Run Manually
 
@@ -79,8 +80,16 @@ Daily outputs are saved in `outputs/YYYY-MM-DD/`:
 - **TRADE**: Medium-term positions, 3-day EMA21 reclaim timer
 - **SPEC**: Speculative positions, tight ATR-based stops
 
-**Entry Signals:**
+**Entry Signals (TRADE bucket):**
 - **Pullback reclaim**: Price crosses above EMA21 while above MA50
 - **Consolidation breakout**: Breaks 20-day high after tight consolidation (max 12% range over 15 days)
-- Must pass strict filters: positive MA50 slope, close/MA50 ≤ 1.25, ATR% ≤ 12%
+- **Recent dip requirement**: 
+  - Stock must have dipped by 6-12% from its 20-day high
+  - Dip must have occurred within the last 12 trading days (from high to low)
+  - Rebound (entry trigger) must happen within 5 days after the low
+- **Volume confirmation**: Entry day volume ≥ 1.5x the 20-day average volume
+- **Strict filters**: 
+  - Positive MA50 slope (10-day)
+  - Close/MA50 ≤ 1.25
+  - ATR% ≤ 12%
 
