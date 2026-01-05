@@ -472,6 +472,8 @@ class FeatureRow:
     
     recent_dip_from_20d_high: bool
     volume_ratio: float
+    open_ge_close_last_3_days: bool  # True if open >= close in all of last 3 trading days
+    close_below_ema21_2d_ago: bool  # True if close < EMA21 on day before yesterday (2 days ago)
 
 
 def compute_features(
@@ -559,6 +561,26 @@ def compute_features(
     curr_volume = float(curr["Volume"]) if np.isfinite(curr["Volume"]) else 0.0
     avg_vol20 = float(curr["AVG_VOL20"]) if np.isfinite(curr["AVG_VOL20"]) and curr["AVG_VOL20"] > 0 else float("nan")
     volume_ratio = float(curr_volume / avg_vol20) if np.isfinite(avg_vol20) and avg_vol20 > 0 else float("nan")
+    
+    # Check if open >= close in all of the last 3 trading days
+    open_ge_close_last_3_days = False
+    if len(df) >= 3:
+        last_3 = df.iloc[-3:]
+        open_ge_close_last_3_days = all(
+            float(row["Open"]) >= float(row["Close"]) 
+            for _, row in last_3.iterrows() 
+            if np.isfinite(row["Open"]) and np.isfinite(row["Close"])
+        )
+    
+    # Check if close < EMA21 on day before yesterday (2 days ago)
+    # Today is index -1, yesterday is -2, day before yesterday is -3
+    close_below_ema21_2d_ago = False
+    if len(df) >= 3:
+        day_before_yesterday = df.iloc[-3]  # 2 days ago
+        close_2d_ago = float(day_before_yesterday["Close"])
+        ema21_2d_ago = float(day_before_yesterday["EMA21"])
+        if np.isfinite(close_2d_ago) and np.isfinite(ema21_2d_ago):
+            close_below_ema21_2d_ago = close_2d_ago < ema21_2d_ago
 
     return FeatureRow(
         symbol="",
@@ -582,6 +604,8 @@ def compute_features(
         range_pct_15d=range_pct_15d,
         recent_dip_from_20d_high=recent_dip_from_20d_high,
         volume_ratio=volume_ratio,
+        open_ge_close_last_3_days=open_ge_close_last_3_days,
+        close_below_ema21_2d_ago=close_below_ema21_2d_ago,
     )
 
 
@@ -592,12 +616,16 @@ def prescreen_pass(close: float, avg_dvol: float, min_price: float, min_avg_dvol
 def trade_entry_signals(f: FeatureRow) -> Tuple[bool, bool, str]:
     if f.below_ma50:
         return False, False, "below_MA50"
-    pullback_reclaim = f.cross_up_ema21
+    # Pullback reclaim: either cross_up_ema21 today, OR (close < EMA21 on day before yesterday AND cross_up_ema21 today)
+    pullback_reclaim = f.cross_up_ema21 or (f.close_below_ema21_2d_ago and f.cross_up_ema21)
     consolidation_breakout = bool(f.consolidation_ok and f.breakout20)
 
     reasons = []
     if pullback_reclaim:
-        reasons.append("pullback_reclaim(EMA21_cross_up)")
+        if f.close_below_ema21_2d_ago and f.cross_up_ema21:
+            reasons.append("pullback_reclaim(close<EMA21_2d_ago+cross_up_today)")
+        elif f.cross_up_ema21:
+            reasons.append("pullback_reclaim(EMA21_cross_up)")
     if consolidation_breakout:
         reasons.append("consolidation_breakout(consolidation+breakout)")
     if not reasons:
@@ -633,6 +661,11 @@ def passes_strict_trade_filters(f: FeatureRow, max_close_over_ma50: float, max_a
     if not np.isfinite(f.volume_ratio) or f.volume_ratio < min_volume_ratio:
         if filter_stats is not None:
             filter_stats["rejected_volume_ratio"] = filter_stats.get("rejected_volume_ratio", 0) + 1
+        return False
+    # Exclude if open >= close in all of the last 3 trading days
+    if f.open_ge_close_last_3_days:
+        if filter_stats is not None:
+            filter_stats["rejected_open_ge_close_3d"] = filter_stats.get("rejected_open_ge_close_3d", 0) + 1
         return False
     if filter_stats is not None:
         filter_stats["passed_all_filters"] = filter_stats.get("passed_all_filters", 0) + 1
@@ -886,6 +919,7 @@ def main():
         "rejected_atr_pct": 0,
         "rejected_recent_dip": 0,
         "rejected_volume_ratio": 0,
+        "rejected_open_ge_close_3d": 0,
         "passed_all_filters": 0,
     }
 
@@ -960,6 +994,7 @@ def main():
     print(f"    ATR% > {strict_max_atr_pct}: {filter_stats['rejected_atr_pct']}")
     print(f"    No recent dip ({dip_min_pct*100:.0f}-{dip_max_pct*100:.0f}% from 20d high): {filter_stats['rejected_recent_dip']}")
     print(f"    Volume ratio < {min_volume_ratio}x: {filter_stats['rejected_volume_ratio']}")
+    print(f"    Open >= Close in last 3 days: {filter_stats['rejected_open_ge_close_3d']}")
     print(f"\n  Passed all filters: {filter_stats['passed_all_filters']}")
 
     entry_df = pd.DataFrame(entry_rows)

@@ -14,8 +14,8 @@
     "breakout_lookback": 20,
     "consolidation_days": 15,
     "consolidation_max_range_pct": 0.12,
-    "dip_min_pct": 0.05,
-    "dip_max_pct": 0.12,
+    "dip_min_pct": 0.03,
+    "dip_max_pct": 0.10,
     "dip_lookback_days": 12,
     "dip_rebound_window": 5,
 
