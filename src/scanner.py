@@ -363,64 +363,111 @@ def load_universe_symbols() -> List[str]:
 
 
 # -------------------------
-# yfinance batch download
+# yfinance batch download with caching
 # -------------------------
 def download_daily_batch(
-    symbols: List[str], start: str, max_retries: int = 3, base_delay: float = 5.0
+    symbols: List[str], 
+    start: str, 
+    max_retries: int = 3, 
+    base_delay: float = 5.0,
+    cache: Optional[object] = None
 ) -> Dict[str, pd.DataFrame]:
+    """
+    Download daily batch data with optional caching.
+    
+    Args:
+        symbols: List of stock symbols
+        start: Start date (YYYY-MM-DD)
+        max_retries: Maximum retry attempts
+        base_delay: Base delay for retries
+        cache: Optional DataCache instance
+    
+    Returns:
+        Dict mapping symbol -> DataFrame with OHLCV data
+    """
+    from data_cache import _fetch_from_api
+    
+    # Calculate end date (today)
+    end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    
     out: Dict[str, pd.DataFrame] = {}
-    for attempt in range(max_retries):
+    
+    # Try cache first if available
+    if cache:
         try:
-            data = yf.download(
-                tickers=symbols,
-                start=start,
-                interval="1d",
-                group_by="ticker",
-                auto_adjust=False,
-                threads=True,
-                progress=False,
-            )
-
-            if data is None or data.empty:
-                return out
-
-            if isinstance(data.columns, pd.MultiIndex):
-                for sym in symbols:
-                    if sym in data.columns.get_level_values(0):
-                        df = data[sym].dropna()
-                        if df.empty:
-                            continue
-                        df = df.rename(columns=str.title)
-                        need = ["Open", "High", "Low", "Close", "Volume"]
-                        if all(c in df.columns for c in need):
-                            out[sym] = df[need].copy()
-            else:
-                df = data.dropna()
-                if not df.empty:
-                    df = df.rename(columns=str.title)
-                    need = ["Open", "High", "Low", "Close", "Volume"]
-                    if all(c in df.columns for c in need):
-                        out[symbols[0]] = df[need].copy()
-
+            # Get cached data
+            cached = cache.get_data(symbols, start, end_date)
+            
+            # For each symbol, check if we need to fetch missing data
+            symbols_to_fetch = []
+            fetch_ranges = {}  # symbol -> (fetch_start, fetch_end)
+            
+            for symbol in symbols:
+                if symbol in cached:
+                    # Check what's missing
+                    latest_date = cache.get_latest_date(symbol)
+                    if latest_date:
+                        # Parse latest date and check if we need more data
+                        latest_dt = datetime.strptime(latest_date, "%Y-%m-%d").date()
+                        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+                        
+                        # If latest date is before end date, fetch missing range
+                        if latest_dt < end_dt:
+                            # Fetch from day after latest_date to end_date
+                            fetch_start = (latest_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+                            fetch_ranges[symbol] = (fetch_start, end_date)
+                            symbols_to_fetch.append(symbol)
+                    else:
+                        # No cache, fetch all
+                        fetch_ranges[symbol] = (start, end_date)
+                        symbols_to_fetch.append(symbol)
+                else:
+                    # Not in cache, fetch all
+                    fetch_ranges[symbol] = (start, end_date)
+                    symbols_to_fetch.append(symbol)
+            
+            # Use cached data for symbols we have
+            out.update(cached)
+            
+            # Fetch missing data from API
+            if symbols_to_fetch:
+                print(f"  Fetching {len(symbols_to_fetch)} symbols from API (cache miss or update needed)...")
+                fetched = _fetch_from_api(symbols_to_fetch, start, end_date, max_retries, base_delay)
+                
+                # Update cache with new data
+                if fetched:
+                    cache.update_data(fetched)
+                
+                # Merge fetched data into output
+                for symbol in symbols_to_fetch:
+                    if symbol in fetched:
+                        if symbol in out:
+                            # Merge: combine cached and fetched data
+                            combined = pd.concat([out[symbol], fetched[symbol]])
+                            combined = combined[~combined.index.duplicated(keep='last')]
+                            combined = combined.sort_index()
+                            out[symbol] = combined
+                        else:
+                            out[symbol] = fetched[symbol]
+            
             return out
-
+            
         except Exception as e:
-            msg = str(e).lower()
-            is_rate_limit = "rate limit" in msg or "too many requests" in msg or "429" in msg
-            if is_rate_limit and attempt < max_retries - 1:
-                delay = base_delay * (2**attempt)
-                print(f"  Rate limit hit (attempt {attempt + 1}/{max_retries}). Waiting {delay:.1f}s...")
-                time.sleep(delay)
-                continue
-            if attempt < max_retries - 1:
-                delay = 2.0 * (attempt + 1)
-                print(f"  Download error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay:.1f}s...")
-                time.sleep(delay)
-                continue
-
-            print(f"  Failed to download batch after {max_retries} attempts: {e}")
-            print(f"  Symbols in failed batch: {symbols[:10]}{'...' if len(symbols) > 10 else ''}")
-            return out
+            print(f"  Cache error: {e}, falling back to API...")
+            # Fall through to API fetch
+    
+    # No cache or cache failed - fetch from API
+    print(f"  Fetching {len(symbols)} symbols from API...")
+    fetched = _fetch_from_api(symbols, start, end_date, max_retries, base_delay)
+    
+    # Update cache if available
+    if cache and fetched:
+        try:
+            cache.update_data(fetched)
+        except Exception as e:
+            print(f"  Warning: Failed to update cache: {e}")
+    
+    return fetched
 
 
 # -------------------------
@@ -785,6 +832,16 @@ def manage_position(sym: str, f: FeatureRow, bucket: str, state: Dict, reclaim_d
 def main():
     cfg = load_json(CONFIG_FILE, default={})
 
+    # Initialize cache if enabled
+    cache = None
+    try:
+        from data_cache import get_cache_backend
+        cache = get_cache_backend(cfg)
+        if cache:
+            print("✓ Data cache enabled")
+    except Exception as e:
+        print(f"  Warning: Failed to initialize cache: {e}")
+
     # Date-stamped output directory (LA by default)
     tz_name = str(cfg.get("output_timezone", DEFAULT_TZ))
     run_date = local_today_str(tz_name)
@@ -866,7 +923,7 @@ def main():
     for batch in chunked(universe, chunk_size):
         batch_num += 1
         print(f"  Batch {batch_num}/{total_batches} ({len(batch)} symbols)...", end=" ", flush=True)
-        bars = download_daily_batch(batch, start=start1)
+        bars = download_daily_batch(batch, start=start1, cache=cache)
         print(f"Got {len(bars)}/{len(batch)} successful downloads")
 
         for sym, df in bars.items():
@@ -928,7 +985,7 @@ def main():
     for batch in chunked(stage1_pass, chunk_size):
         batch_num += 1
         print(f"  Batch {batch_num}/{total_batches} ({len(batch)} symbols)...", end=" ", flush=True)
-        bars = download_daily_batch(batch, start=start2)
+        bars = download_daily_batch(batch, start=start2, cache=cache)
         print(f"Got {len(bars)}/{len(batch)} successful downloads")
 
         for sym, df in bars.items():
@@ -1055,6 +1112,13 @@ def main():
         print("Sent Telegram notification.")
     except Exception as e:
         print(f"WARNING: Telegram notify failed: {e}")
+    
+    # Close cache connection if used
+    if cache:
+        try:
+            cache.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
