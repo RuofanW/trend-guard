@@ -91,6 +91,28 @@ def build_summary(out_dir: str) -> str:
             lines.append("• Holdings: (empty manage_positions.csv)")
     else:
         lines.append("• Holdings: (missing manage_positions.csv)")
+    
+    # Earnings alerts from holdings snapshot (only show if there are actual alerts)
+    snapshot_path = os.path.join(out_dir, "holdings_snapshot.csv")
+    if os.path.exists(snapshot_path):
+        try:
+            snapshot = pd.read_csv(snapshot_path)
+            if "earnings_alert" in snapshot.columns:
+                # Filter out NaN, None, and empty strings
+                earnings = snapshot[
+                    snapshot["earnings_alert"].notna() & 
+                    (snapshot["earnings_alert"].astype(str).str.strip() != "") &
+                    (snapshot["earnings_alert"].astype(str).str.strip() != "nan")
+                ]
+                if not earnings.empty:
+                    lines.append("")
+                    lines.append("📅 Earnings Alerts:")
+                    for _, r in earnings.iterrows():
+                        sym = r.get("symbol", "?")
+                        alert = r.get("earnings_alert", "")
+                        lines.append(f"  ⚠️ {sym}: {alert}")
+        except (pd.errors.EmptyDataError, ValueError):
+            pass
 
     # Optional report link
     base = _env("REPORT_BASE_URL")

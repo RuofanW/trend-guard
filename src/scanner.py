@@ -154,6 +154,64 @@ def _require_env(name: str) -> str:
     return v
 
 
+# -------------------------
+# Earnings detection
+# -------------------------
+def get_earnings_date(symbol: str) -> Optional[str]:
+    """
+    Get the next earnings date for a symbol using yfinance.
+    Returns YYYY-MM-DD string or None if not available.
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        calendar = ticker.calendar
+        if calendar is not None and not calendar.empty:
+            # Get the next earnings date (first row)
+            earnings_date = calendar.iloc[0].get("Earnings Date")
+            if earnings_date is not None:
+                if isinstance(earnings_date, pd.Timestamp):
+                    return earnings_date.strftime("%Y-%m-%d")
+                elif isinstance(earnings_date, str):
+                    # Try to parse if it's a string
+                    try:
+                        dt = pd.to_datetime(earnings_date)
+                        return dt.strftime("%Y-%m-%d")
+                    except:
+                        return None
+        return None
+    except Exception:
+        # Silently fail - earnings data may not be available for all symbols
+        return None
+
+
+def has_earnings_soon(symbol: str, today: datetime, days_ahead: int = 4) -> bool:
+    """
+    Check if symbol has earnings within the next N trading days.
+    Returns True if earnings date is within the window, False otherwise.
+    """
+    earnings_date_str = get_earnings_date(symbol)
+    if earnings_date_str is None:
+        return False
+    
+    try:
+        earnings_date = datetime.strptime(earnings_date_str, "%Y-%m-%d").date()
+        today_date = today.date()
+        
+        # Calculate trading days (simple approximation: exclude weekends)
+        # For more accuracy, we could use pandas.bdate_range, but this is simpler
+        days_diff = (earnings_date - today_date).days
+        
+        # If earnings is today or in the future within the window
+        if 0 <= days_diff <= days_ahead:
+            # Exclude weekends (rough check)
+            # If earnings is on weekend, it's likely after market hours announcement
+            # We'll include it anyway as it's still "soon"
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def _rh_login_and_verify(rh, username: str, password: str, mfa_code: Optional[str]) -> None:
     """
     Login and verify session is valid.
@@ -206,6 +264,10 @@ def load_holdings_from_robinhood(date_str: str) -> List[str]:
 
     syms: List[str] = []
     holdings_data: List[Dict[str, str]] = []
+    
+    # Get today's date for earnings check
+    today = datetime.now(timezone.utc)
+    tomorrow = today + timedelta(days=1)
 
     for sym, data in holdings.items():
         if not sym:
@@ -216,6 +278,22 @@ def load_holdings_from_robinhood(date_str: str) -> List[str]:
 
         syms.append(s)
 
+        # Check for earnings today or tomorrow
+        earnings_date_str = get_earnings_date(s)
+        earnings_alert = ""
+        if earnings_date_str:
+            try:
+                earnings_date = datetime.strptime(earnings_date_str, "%Y-%m-%d").date()
+                today_date = today.date()
+                tomorrow_date = tomorrow.date()
+                
+                if earnings_date == today_date:
+                    earnings_alert = f"EARNINGS TODAY ({earnings_date_str})"
+                elif earnings_date == tomorrow_date:
+                    earnings_alert = f"EARNINGS TOMORROW ({earnings_date_str})"
+            except Exception:
+                pass
+
         if isinstance(data, dict):
             holdings_data.append(
                 {
@@ -224,11 +302,19 @@ def load_holdings_from_robinhood(date_str: str) -> List[str]:
                     "average_buy_price": str(data.get("average_buy_price", "")),
                     "equity": str(data.get("equity", "")),
                     "percent_change": str(data.get("percent_change", "")),
+                    "earnings_alert": earnings_alert,
                 }
             )
         else:
             holdings_data.append(
-                {"symbol": s, "quantity": "", "average_buy_price": "", "equity": "", "percent_change": ""}
+                {
+                    "symbol": s,
+                    "quantity": "",
+                    "average_buy_price": "",
+                    "equity": "",
+                    "percent_change": "",
+                    "earnings_alert": earnings_alert,
+                }
             )
 
     # De-dupe preserving order
@@ -944,6 +1030,10 @@ def main():
         print(f"Got {len(bars)}/{len(batch)} successful downloads")
 
         for sym, df in bars.items():
+            # Exclude stocks with earnings in next 4 trading days
+            if has_earnings_soon(sym, datetime.now(timezone.utc), days_ahead=4):
+                continue
+            
             s1 = compute_stage1_prescreen(df)
             if s1 is None:
                 continue
