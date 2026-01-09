@@ -30,7 +30,7 @@
     "strict_max_close_over_ma50": 1.25,
     "strict_max_atr_pct": 0.12,
     "scan_universe": true,
-    "max_universe_symbols": 0,
+    "max_universe_symbols": 100,
 
     "min_volume_ratio": 1.25,
   

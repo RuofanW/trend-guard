@@ -80,6 +80,17 @@ def make_report(out_dir: str) -> str:
     # Snapshot
     if not snapshot.empty:
         html_parts.append("<h2>Holdings Snapshot (from Robinhood API)</h2>")
+        # Highlight earnings alerts (only show if there are actual alerts)
+        if "earnings_alert" in snapshot.columns:
+            # Filter out NaN, None, and empty strings
+            earnings_alerts = snapshot[
+                snapshot["earnings_alert"].notna() & 
+                (snapshot["earnings_alert"].astype(str).str.strip() != "") &
+                (snapshot["earnings_alert"].astype(str).str.strip() != "nan")
+            ]
+            if not earnings_alerts.empty:
+                html_parts.append("<h3 style='color: red;'>⚠️ Earnings Alerts</h3>")
+                html_parts.append(earnings_alerts[["symbol", "earnings_alert"]].to_html(index=False, escape=False))
         html_parts.append(snapshot.to_html(index=False, escape=False))
 
     # Manage table
