@@ -359,68 +359,142 @@ def load_universe_symbols() -> List[str]:
     uni = uni[uni["exchange"].isin(["NASDAQ", "NYSE", "AMEX"])].copy()
 
     syms = uni["symbol"].astype(str).str.strip().str.upper().str.replace(".", "-", regex=False).tolist()
-    return [s for s in syms if s and s != "NAN" and "^" not in s]
+    
+    # Filter out invalid/problematic symbols:
+    # - Symbols with "^" (indices)
+    # - Symbols with "$" (preferred shares, e.g., "BC$C", "BAC$N")
+    # - Symbols ending with "-W" (warrants, e.g., "BBAI-W")
+    # - Symbols ending with "-U" (units, e.g., "BCSS-U")
+    # - Symbols ending with "-R" (rights)
+    filtered = []
+    for s in syms:
+        if not s or s == "NAN":
+            continue
+        if "^" in s or "$" in s:
+            continue
+        if s.endswith(("-W", "-U", "-R")):
+            continue
+        filtered.append(s)
+    
+    return filtered
 
 
 # -------------------------
-# yfinance batch download
+# yfinance batch download with per-symbol error handling
 # -------------------------
+def _download_single_symbol(symbol: str, start: str, max_retries: int = 2) -> Optional[pd.DataFrame]:
+    """Download data for a single symbol with retries and timeout."""
+    for attempt in range(max_retries):
+        try:
+            # Use Ticker API for single symbols (more reliable than download)
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(start=start, interval="1d", auto_adjust=False)
+            
+            if hist is None or hist.empty:
+                if attempt < max_retries - 1:
+                    time.sleep(0.3)
+                    continue
+                return None
+            
+            # Ensure we have required columns
+            hist = hist.rename(columns=str.title)
+            need = ["Open", "High", "Low", "Close", "Volume"]
+            if all(c in hist.columns for c in need):
+                return hist[need].copy()
+            
+            return None
+            
+        except Exception:
+            if attempt < max_retries - 1:
+                time.sleep(0.3 * (attempt + 1))
+                continue
+            # Silently fail individual symbols
+            return None
+    
+    return None
+
+
 def download_daily_batch(
     symbols: List[str], start: str, max_retries: int = 3, base_delay: float = 5.0
 ) -> Dict[str, pd.DataFrame]:
+    """
+    Download data for multiple symbols with per-symbol error handling.
+    Uses smaller sub-batches to avoid overwhelming the API.
+    """
     out: Dict[str, pd.DataFrame] = {}
-    for attempt in range(max_retries):
+    
+    # Process in smaller sub-batches to avoid overwhelming API
+    # Smaller batches = more reliable, less likely to hit rate limits
+    sub_batch_size = min(5, len(symbols))  # Download 5 symbols at a time (reduced from 10)
+    failed_symbols = []
+    
+    for i in range(0, len(symbols), sub_batch_size):
+        sub_batch = symbols[i:i + sub_batch_size]
+        
+        # Try batch download first (faster when it works)
         try:
             data = yf.download(
-                tickers=symbols,
+                tickers=sub_batch,
                 start=start,
                 interval="1d",
                 group_by="ticker",
                 auto_adjust=False,
-                threads=True,
+                threads=False,  # Disable threads to reduce connection issues
                 progress=False,
             )
-
-            if data is None or data.empty:
-                return out
-
-            if isinstance(data.columns, pd.MultiIndex):
-                for sym in symbols:
-                    if sym in data.columns.get_level_values(0):
-                        df = data[sym].dropna()
-                        if df.empty:
-                            continue
-                        df = df.rename(columns=str.title)
-                        need = ["Open", "High", "Low", "Close", "Volume"]
-                        if all(c in df.columns for c in need):
-                            out[sym] = df[need].copy()
+            
+            if data is not None and not data.empty:
+                if isinstance(data.columns, pd.MultiIndex):
+                    for sym in sub_batch:
+                        if sym in data.columns.get_level_values(0):
+                            try:
+                                df = data[sym].dropna()
+                                if df.empty:
+                                    failed_symbols.append(sym)
+                                    continue
+                                df = df.rename(columns=str.title)
+                                need = ["Open", "High", "Low", "Close", "Volume"]
+                                if all(c in df.columns for c in need):
+                                    out[sym] = df[need].copy()
+                                else:
+                                    failed_symbols.append(sym)
+                            except Exception:
+                                failed_symbols.append(sym)
+                else:
+                    # Single symbol response
+                    try:
+                        df = data.dropna()
+                        if not df.empty:
+                            df = df.rename(columns=str.title)
+                            need = ["Open", "High", "Low", "Close", "Volume"]
+                            if all(c in df.columns for c in need):
+                                out[sub_batch[0]] = df[need].copy()
+                            else:
+                                failed_symbols.extend(sub_batch)
+                        else:
+                            failed_symbols.extend(sub_batch)
+                    except Exception:
+                        failed_symbols.extend(sub_batch)
             else:
-                df = data.dropna()
-                if not df.empty:
-                    df = df.rename(columns=str.title)
-                    need = ["Open", "High", "Low", "Close", "Volume"]
-                    if all(c in df.columns for c in need):
-                        out[symbols[0]] = df[need].copy()
-
-            return out
-
-        except Exception as e:
-            msg = str(e).lower()
-            is_rate_limit = "rate limit" in msg or "too many requests" in msg or "429" in msg
-            if is_rate_limit and attempt < max_retries - 1:
-                delay = base_delay * (2**attempt)
-                print(f"  Rate limit hit (attempt {attempt + 1}/{max_retries}). Waiting {delay:.1f}s...")
-                time.sleep(delay)
-                continue
-            if attempt < max_retries - 1:
-                delay = 2.0 * (attempt + 1)
-                print(f"  Download error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay:.1f}s...")
-                time.sleep(delay)
-                continue
-
-            print(f"  Failed to download batch after {max_retries} attempts: {e}")
-            print(f"  Symbols in failed batch: {symbols[:10]}{'...' if len(symbols) > 10 else ''}")
-            return out
+                failed_symbols.extend(sub_batch)
+                
+        except Exception:
+            # Batch failed, mark all for individual retry
+            failed_symbols.extend(sub_batch)
+        
+        # Small delay between sub-batches to avoid rate limiting
+        if i + sub_batch_size < len(symbols):
+            time.sleep(0.5)  # Increased from 0.2 to 0.5
+    
+    # Retry failed symbols individually (more reliable)
+    if failed_symbols:
+        for sym in failed_symbols:
+            df = _download_single_symbol(sym, start, max_retries=2)
+            if df is not None:
+                out[sym] = df
+            time.sleep(0.2)  # Small delay between individual downloads
+    
+    return out
 
 
 # -------------------------
@@ -816,8 +890,8 @@ def main():
     max_candidates_stage2 = int(cfg.get("max_candidates_stage2", 800))
 
     # performance
-    chunk_size = int(cfg.get("chunk_size", 150))
-    sleep_sec = float(cfg.get("sleep_between_chunks_sec", 1.0))
+    chunk_size = int(cfg.get("chunk_size", 50))  # Reduced default from 150 to 50 for better reliability
+    sleep_sec = float(cfg.get("sleep_between_chunks_sec", 2.0))  # Increased default from 1.0 to 2.0
 
     # toggles
     scan_universe = bool(cfg.get("scan_universe", True))
