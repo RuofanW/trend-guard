@@ -30,9 +30,10 @@
     "strict_max_close_over_ma50": 1.25,
     "strict_max_atr_pct": 0.12,
     "scan_universe": true,
-    "max_universe_symbols": 100,
+    "max_universe_symbols": 0,
 
     "min_volume_ratio": 1.25,
   
-    "holdings_csv": "robinhood_holdings.csv"
+    "holdings_csv": "robinhood_holdings.csv",
+    "read_log_verbose": true
 }

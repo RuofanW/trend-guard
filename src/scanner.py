@@ -31,15 +31,22 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# Add project root to path so we can import src modules
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
+from src.data_backend import db_download, db_download_batch, update_symbols_batch
 
 # Load environment variables from .env file (if it exists)
 try:
@@ -466,121 +473,38 @@ def load_universe_symbols() -> List[str]:
 
 
 # -------------------------
-# yfinance batch download with per-symbol error handling
+# Database batch download (replaces yfinance)
 # -------------------------
-def _download_single_symbol(symbol: str, start: str, max_retries: int = 2) -> Optional[pd.DataFrame]:
-    """Download data for a single symbol with retries and timeout."""
-    for attempt in range(max_retries):
-        try:
-            # Use Ticker API for single symbols (more reliable than download)
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(start=start, interval="1d", auto_adjust=False)
-            
-            if hist is None or hist.empty:
-                if attempt < max_retries - 1:
-                    time.sleep(0.3)
-                    continue
-                return None
-            
-            # Ensure we have required columns
-            hist = hist.rename(columns=str.title)
-            need = ["Open", "High", "Low", "Close", "Volume"]
-            if all(c in hist.columns for c in need):
-                return hist[need].copy()
-            
-            return None
-            
-        except Exception:
-            if attempt < max_retries - 1:
-                time.sleep(0.3 * (attempt + 1))
-                continue
-            # Silently fail individual symbols
-            return None
-    
-    return None
-
-
 def download_daily_batch(
     symbols: List[str], start: str, max_retries: int = 3, base_delay: float = 5.0
 ) -> Dict[str, pd.DataFrame]:
     """
-    Download data for multiple symbols with per-symbol error handling.
-    Uses smaller sub-batches to avoid overwhelming the API.
+    Download data for multiple symbols from database in a single batch query.
+    Much more efficient than per-symbol queries.
+    Note: max_retries and base_delay are kept for API compatibility but not used.
     """
-    out: Dict[str, pd.DataFrame] = {}
+    if not symbols:
+        return {}
     
-    # Process in smaller sub-batches to avoid overwhelming API
-    # Smaller batches = more reliable, less likely to hit rate limits
-    sub_batch_size = min(5, len(symbols))  # Download 5 symbols at a time (reduced from 10)
-    failed_symbols = []
+    # Get today's date as end date
+    end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
-    for i in range(0, len(symbols), sub_batch_size):
-        sub_batch = symbols[i:i + sub_batch_size]
-        
-        # Try batch download first (faster when it works)
-        try:
-            data = yf.download(
-                tickers=sub_batch,
-                start=start,
-                interval="1d",
-                group_by="ticker",
-                auto_adjust=False,
-                threads=False,  # Disable threads to reduce connection issues
-                progress=False,
-            )
-            
-            if data is not None and not data.empty:
-                if isinstance(data.columns, pd.MultiIndex):
-                    for sym in sub_batch:
-                        if sym in data.columns.get_level_values(0):
-                            try:
-                                df = data[sym].dropna()
-                                if df.empty:
-                                    failed_symbols.append(sym)
-                                    continue
-                                df = df.rename(columns=str.title)
-                                need = ["Open", "High", "Low", "Close", "Volume"]
-                                if all(c in df.columns for c in need):
-                                    out[sym] = df[need].copy()
-                                else:
-                                    failed_symbols.append(sym)
-                            except Exception:
-                                failed_symbols.append(sym)
-                else:
-                    # Single symbol response
-                    try:
-                        df = data.dropna()
-                        if not df.empty:
-                            df = df.rename(columns=str.title)
-                            need = ["Open", "High", "Low", "Close", "Volume"]
-                            if all(c in df.columns for c in need):
-                                out[sub_batch[0]] = df[need].copy()
-                            else:
-                                failed_symbols.extend(sub_batch)
-                        else:
-                            failed_symbols.extend(sub_batch)
-                    except Exception:
-                        failed_symbols.extend(sub_batch)
-            else:
-                failed_symbols.extend(sub_batch)
-                
-        except Exception:
-            # Batch failed, mark all for individual retry
-            failed_symbols.extend(sub_batch)
-        
-        # Small delay between sub-batches to avoid rate limiting
-        if i + sub_batch_size < len(symbols):
-            time.sleep(0.5)  # Increased from 0.2 to 0.5
-    
-    # Retry failed symbols individually (more reliable)
-    if failed_symbols:
-        for sym in failed_symbols:
-            df = _download_single_symbol(sym, start, max_retries=2)
-            if df is not None:
-                out[sym] = df
-            time.sleep(0.2)  # Small delay between individual downloads
-    
-    return out
+    # try:
+        # Single batch query for all symbols - much faster!
+    return db_download_batch(symbols, start, end)
+    # except Exception:
+    #     # Fallback to individual queries if batch fails
+    #     out: Dict[str, pd.DataFrame] = {}
+    #     for sym in symbols:
+    #         try:
+    #             df = db_download(sym, start, end)
+    #             if df is not None and not df.empty:
+    #                 need = ["Open", "High", "Low", "Close", "Volume"]
+    #                 if all(c in df.columns for c in need):
+    #                     out[sym] = df[need].copy()
+    #         except Exception:
+    #             pass
+    #     return out
 
 
 # -------------------------
@@ -1014,34 +938,38 @@ def main():
         print(f"Universe symbols (NYSE+NASDAQ ex-ETF/test): {len(universe)}")
 
     # -------------------------
+    # Pre-execution: Update database with missing data
+    # -------------------------
+    print("\nUpdating database with missing data...")
+    start1 = (datetime.now(timezone.utc) - timedelta(days=stage2_days + 30)).strftime("%Y-%m-%d")
+    end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    
+    # Update universe symbols for Stage 1 date range
+    read_log_verbose = bool(cfg.get("read_log_verbose", False))
+    print(f"  Updating {len(universe)} symbols for Stage 1 range ({start1} to {end_date})...")
+    # Check all symbols at once (fast DB query), then update only those that need it
+    # This is much faster than chunking the check phase - we only chunk the actual API updates
+    updated_count = update_symbols_batch(universe, start1, end_date, verbose=read_log_verbose)
+    print(f"  Updated {updated_count}/{len(universe)} symbols")
+
+    # -------------------------
     # Stage 1: quick prescreen
     # -------------------------
-    start1 = (datetime.now(timezone.utc) - timedelta(days=stage1_days + 30)).strftime("%Y-%m-%d")
     stage1_rows = []
 
     print("\nStage 1: quick prescreen ...")
-    batch_num = 0
-    total_batches = (len(universe) + chunk_size - 1) // chunk_size
+    print(f"  Reading {len(universe)} symbols from database...", end=" ", flush=True)
+    # Read all symbols at once from database (no chunking needed for local DB)
+    bars = download_daily_batch(universe, start=start1)
+    print(f"Got {len(bars)}/{len(universe)} successful reads")
 
-    for batch in chunked(universe, chunk_size):
-        batch_num += 1
-        print(f"  Batch {batch_num}/{total_batches} ({len(batch)} symbols)...", end=" ", flush=True)
-        bars = download_daily_batch(batch, start=start1)
-        print(f"Got {len(bars)}/{len(batch)} successful downloads")
-
-        for sym, df in bars.items():
-            # Exclude stocks with earnings in next 4 trading days
-            if has_earnings_soon(sym, datetime.now(timezone.utc), days_ahead=4):
-                continue
-            
-            s1 = compute_stage1_prescreen(df)
-            if s1 is None:
-                continue
-            _asof, close, avg_dvol = s1
-            if prescreen_pass(close, avg_dvol, min_price, min_avg_dvol):
-                stage1_rows.append({"symbol": sym, "asof": _asof, "close": close, "avg_dollar_vol_20d": avg_dvol})
-
-        time.sleep(sleep_sec)
+    for sym, df in bars.items():
+        s1 = compute_stage1_prescreen(df)
+        if s1 is None:
+            continue
+        _asof, close, avg_dvol = s1
+        if prescreen_pass(close, avg_dvol, min_price, min_avg_dvol):
+            stage1_rows.append({"symbol": sym, "asof": _asof, "close": close, "avg_dollar_vol_20d": avg_dvol})
 
     stage1_df = pd.DataFrame(stage1_rows)
     if stage1_df.empty:
@@ -1063,10 +991,15 @@ def main():
         if s not in stage1_pass:
             stage1_pass.append(s)
 
+    # Update database for Stage 2 symbols
+    start2 = (datetime.now(timezone.utc) - timedelta(days=stage2_days + 60)).strftime("%Y-%m-%d")
+    print(f"\nUpdating database for Stage 2 symbols ({len(stage1_pass)} symbols, range {start2} to {end_date})...")
+    updated_count2 = update_symbols_batch(stage1_pass, start2, end_date, verbose=read_log_verbose)
+    print(f"  Updated {updated_count2}/{len(stage1_pass)} symbols")
+
     # -------------------------
     # Stage 2: compute entry signals + manage holdings
     # -------------------------
-    start2 = (datetime.now(timezone.utc) - timedelta(days=stage2_days + 60)).strftime("%Y-%m-%d")
     entry_rows = []
     manage_rows = []
     features_map: Dict[str, FeatureRow] = {}
@@ -1086,64 +1019,58 @@ def main():
     }
 
     print("\nStage 2: compute entry signals & manage holdings ...")
-    batch_num = 0
-    total_batches = (len(stage1_pass) + chunk_size - 1) // chunk_size
+    print(f"  Reading {len(stage1_pass)} symbols from database...", end=" ", flush=True)
+    # Read all symbols at once from database (no chunking needed for local DB)
+    bars = download_daily_batch(stage1_pass, start=start2)
+    print(f"Got {len(bars)}/{len(stage1_pass)} successful reads")
 
-    for batch in chunked(stage1_pass, chunk_size):
-        batch_num += 1
-        print(f"  Batch {batch_num}/{total_batches} ({len(batch)} symbols)...", end=" ", flush=True)
-        bars = download_daily_batch(batch, start=start2)
-        print(f"Got {len(bars)}/{len(batch)} successful downloads")
+    for sym, df in bars.items():
+        f = compute_features(
+            df,
+            ma_len,
+            ema_len,
+            atr_len,
+            breakout_lookback,
+            consolidation_days,
+            consolidation_max_range_pct,
+            dip_min_pct,
+            dip_max_pct,
+            dip_lookback_days,
+            dip_rebound_window,
+        )
+        if f is None:
+            continue
+        filter_stats["evaluated"] += 1
+        f.symbol = sym
+        features_map[sym] = f
 
-        for sym, df in bars.items():
-            f = compute_features(
-                df,
-                ma_len,
-                ema_len,
-                atr_len,
-                breakout_lookback,
-                consolidation_days,
-                consolidation_max_range_pct,
-                dip_min_pct,
-                dip_max_pct,
-                dip_lookback_days,
-                dip_rebound_window,
-            )
-            if f is None:
-                continue
-            filter_stats["evaluated"] += 1
-            f.symbol = sym
-            features_map[sym] = f
-
-            if prescreen_pass(f.close, f.avg_dollar_vol_20d, min_price, min_avg_dvol):
-                filter_stats["passed_prescreen"] += 1
-                pr, cb, why = trade_entry_signals(f)
-                if pr or cb:
-                    filter_stats["had_entry_signal"] += 1
-                    if passes_strict_trade_filters(f, strict_max_close_over_ma50, strict_max_atr_pct, min_volume_ratio, filter_stats):
-                        entry_rows.append(
-                            {
-                                "symbol": sym,
-                                "asof": f.asof,
-                                "close": f.close,
-                                "ma50": f.ma50,
-                                "ema21": f.ema21,
-                                "atr14": f.atr14,
-                                "atr_pct": f.atr_pct,
-                                "avg_dollar_vol_20d": f.avg_dollar_vol_20d,
-                                "close_over_ma50": f.close_over_ma50,
-                                "ma50_slope_10d": f.ma50_slope_10d,
-                                "range_pct_15d": f.range_pct_15d,
-                                "recent_dip_from_20d_high": f.recent_dip_from_20d_high,
-                                "volume_ratio": f.volume_ratio,
-                                "signal_pullback_reclaim": pr,
-                                "signal_consolidation_breakout": cb,
-                                "reasons": why,
-                                "score": entry_score(f),
-                            }
-                        )
-
-        time.sleep(sleep_sec)
+        if prescreen_pass(f.close, f.avg_dollar_vol_20d, min_price, min_avg_dvol):
+            filter_stats["passed_prescreen"] += 1
+            pr, cb, why = trade_entry_signals(f)
+            if pr or cb:
+                filter_stats["had_entry_signal"] += 1
+                if passes_strict_trade_filters(f, strict_max_close_over_ma50, strict_max_atr_pct, min_volume_ratio, filter_stats):
+                    entry_rows.append(
+                        {
+                            "symbol": sym,
+                            "asof": f.asof,
+                            "close": f.close,
+                            "ma50": f.ma50,
+                            "ema21": f.ema21,
+                            "atr14": f.atr14,
+                            "atr_pct": f.atr_pct,
+                            "avg_dollar_vol_20d": f.avg_dollar_vol_20d,
+                            "close_over_ma50": f.close_over_ma50,
+                            "ma50_slope_10d": f.ma50_slope_10d,
+                            "range_pct_15d": f.range_pct_15d,
+                            "recent_dip_from_20d_high": f.recent_dip_from_20d_high,
+                            "volume_ratio": f.volume_ratio,
+                            "signal_pullback_reclaim": pr,
+                            "signal_consolidation_breakout": cb,
+                            "reasons": why,
+                            "score": entry_score(f),
+                        }
+                    )
 
     # Print filter statistics
     print(f"\nStage 2 filter statistics:")
@@ -1163,12 +1090,25 @@ def main():
     total_ranked = len(entry_df)
     if not entry_df.empty:
         entry_df = entry_df.sort_values(by="score", ascending=False).head(entry_top_n)
+        
+        # Filter out entry candidates with earnings in next 4 trading days (after ranking to minimize API calls)
+        today = datetime.now(timezone.utc)
+        entry_df_filtered = entry_df[~entry_df["symbol"].apply(
+            lambda sym: has_earnings_soon(sym, today, days_ahead=4)
+        )].copy()
+        
+        if len(entry_df_filtered) < len(entry_df):
+            excluded_count = len(entry_df) - len(entry_df_filtered)
+            print(f"  Excluded {excluded_count} entry candidate(s) due to earnings in next 4 trading days")
+            entry_df = entry_df_filtered
     
     print(f"\n  Final entry candidates: {len(entry_df)} (from {total_ranked} ranked, top {entry_top_n} selected)")
 
     entry_df.to_csv(out_entry, index=False)
 
     # Manage holdings
+    today = datetime.now(timezone.utc)
+    tomorrow = today + timedelta(days=1)
     for sym in held_syms:
         f = features_map.get(sym)
         if f is None:
@@ -1185,6 +1125,24 @@ def main():
             bucket = "TRADE"
 
         notes = manage_position(sym, f, bucket, state, reclaim_days)
+        
+        # Add earnings alerts for holdings
+        earnings_date_str = get_earnings_date(sym)
+        if earnings_date_str:
+            try:
+                earnings_date = datetime.strptime(earnings_date_str, "%Y-%m-%d").date()
+                today_date = today.date()
+                tomorrow_date = tomorrow.date()
+                
+                if earnings_date == today_date:
+                    notes = f"⚠️ EARNINGS TODAY ({earnings_date_str}) | " + notes
+                elif earnings_date == tomorrow_date:
+                    notes = f"⚠️ EARNINGS TOMORROW ({earnings_date_str}) | " + notes
+                elif 2 <= (earnings_date - today_date).days <= 4:
+                    notes = f"⚠️ EARNINGS IN {(earnings_date - today_date).days} DAYS ({earnings_date_str}) | " + notes
+            except Exception:
+                pass
+        
         manage_rows.append({"symbol": sym, "bucket": bucket, "asof": f.asof, "close": f.close, "notes": notes})
 
     pd.DataFrame(manage_rows).to_csv(out_manage, index=False)
@@ -1206,7 +1164,7 @@ def main():
     
     # Generate HTML report
     try:
-        from report import make_report
+        from src.report import make_report
         report_path = make_report(out_dir)
         print(f"Saved: {report_path} (HTML report)")
     except Exception as e:
@@ -1214,7 +1172,7 @@ def main():
 
     # Notify (Telegram)
     try:
-        from notify import notify_run
+        from src.notify import notify_run
         notify_run(out_dir)
         print("Sent Telegram notification.")
     except Exception as e:
