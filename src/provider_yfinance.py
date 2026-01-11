@@ -6,7 +6,7 @@ from typing import Optional
 def fetch_yfinance_daily(symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> pd.DataFrame:
     """
     Fetch daily OHLCV data from yfinance.
-    Supports date ranges, which makes it more efficient than stooq for incremental updates.
+    Supports date ranges for efficient incremental updates.
     
     Args:
         symbol: Stock symbol (e.g., 'AAPL')

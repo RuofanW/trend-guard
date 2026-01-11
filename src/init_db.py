@@ -1,7 +1,9 @@
 import duckdb
 from pathlib import Path
 
-DB_PATH = Path("data/market.duckdb")
+# Get project root (parent of src directory)
+PROJECT_ROOT = Path(__file__).parent.parent
+DB_PATH = PROJECT_ROOT / "data" / "market.duckdb"
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 con = duckdb.connect(str(DB_PATH))
@@ -30,3 +32,4 @@ CREATE TABLE IF NOT EXISTS meta_symbol (
 
 con.close()
 print(f"Initialized {DB_PATH}")
+

@@ -3,16 +3,12 @@ import pandas as pd
 from pathlib import Path
 from datetime import timedelta, datetime
 from typing import Dict, List
-import sys
 import time
 
-# Add scripts directory to path to import providers
+from src.provider_yfinance import fetch_yfinance_daily
+
+# Get project root (parent of src directory)
 PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
-
-from provider_stooq import fetch_stooq_daily
-from provider_yfinance import fetch_yfinance_daily
-
 DB_PATH = PROJECT_ROOT / "data" / "market.duckdb"
 
 def check_process_alive(pid: int) -> bool:
@@ -89,7 +85,7 @@ def last_date(con, symbol: str):
     result = con.execute("SELECT max(date) FROM ohlcv_daily WHERE symbol=?", [symbol]).fetchone()[0]
     return result
 
-def upsert(con, df, source="stooq"):
+def upsert(con, df, source="yfinance"):
     """Upsert OHLCV data into the database."""
     df = df.copy()
     df["source"] = source
@@ -113,15 +109,14 @@ def update_symbol(symbol: str, start_date: str, end_date: str, con, use_yfinance
     Update data for a single symbol.
     NOTE: This function assumes the symbol needs an update (filtering is done in update_symbols_batch).
     
-    Uses yfinance by default (supports date ranges) for efficiency.
-    Falls back to stooq if yfinance fails.
+    Uses yfinance (supports date ranges) for efficient incremental updates.
     
     Args:
         symbol: Stock symbol
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
         con: DuckDB connection (reused to avoid lock conflicts)
-        use_yfinance: If True, use yfinance (supports date ranges). If False, use stooq.
+        use_yfinance: If True, use yfinance (supports date ranges). Currently always True.
         verbose: If True, print detailed per-symbol logs. If False, only log errors.
     """
     symbol = symbol.upper()
@@ -132,32 +127,15 @@ def update_symbol(symbol: str, start_date: str, end_date: str, con, use_yfinance
     fetch_start = (start - timedelta(days=10)).strftime("%Y-%m-%d")
     
     df = pd.DataFrame()
-    source = "unknown"
+    source = "yfinance"
     
-    # Try yfinance first (supports date ranges - much more efficient!)
+    # Fetch from yfinance (supports date ranges - much more efficient!)
     if use_yfinance:
         try:
             df = fetch_yfinance_daily(symbol, start_date=fetch_start, end_date=end_date)
-            source = "yfinance"
-        except Exception as e:
-            if verbose:
-                print(f"    {symbol}: yfinance failed, trying stooq - {e}")
-    
-    # Fallback to stooq if yfinance failed or disabled
-    if df.empty:
-        try:
-            # Stooq doesn't support date ranges, so we fetch all and filter
-            df = fetch_stooq_daily(symbol)
-            source = "stooq"
-            
-            if not df.empty:
-                # Filter to only the dates we need
-                fetch_start_date = pd.to_datetime(fetch_start).date()
-                end = pd.to_datetime(end_date).date()
-                df = df[(df["date"] >= fetch_start_date) & (df["date"] <= end)].copy()
         except Exception as e:
             # Always log errors, even in non-verbose mode
-            print(f"    {symbol}: Failed to fetch from {source} - {e}")
+            print(f"    {symbol}: Failed to fetch from yfinance - {e}")
             return 0
     
     if df.empty:

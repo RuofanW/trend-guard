@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf
-from data_backend import db_download, db_download_batch, update_symbols_batch
+from src.data_backend import db_download, db_download_batch, update_symbols_batch
 
 # Load environment variables from .env file (if it exists)
 try:
@@ -1158,7 +1158,7 @@ def main():
     
     # Generate HTML report
     try:
-        from report import make_report
+        from src.report import make_report
         report_path = make_report(out_dir)
         print(f"Saved: {report_path} (HTML report)")
     except Exception as e:
@@ -1166,7 +1166,7 @@ def main():
 
     # Notify (Telegram)
     try:
-        from notify import notify_run
+        from src.notify import notify_run
         notify_run(out_dir)
         print("Sent Telegram notification.")
     except Exception as e:
