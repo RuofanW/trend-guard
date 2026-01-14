@@ -8,6 +8,7 @@ Automated daily market scanner that analyzes stocks, generates trading signals, 
 - **Position Management**: Tracks your holdings with CORE/TRADE/SPEC buckets
 - **Automated Scheduling**: Runs daily at 12:15 PM PST (even when screen is locked)
 - **Robinhood Integration**: Auto-loads holdings from Robinhood API
+- **Local Database**: Uses DuckDB for fast data storage and retrieval (no repeated API calls)
 - **HTML Reports**: Generates visual reports with charts
 - **Telegram Notifications**: Sends daily summaries via Telegram
 
@@ -19,7 +20,16 @@ Automated daily market scanner that analyzes stocks, generates trading signals, 
 uv sync
 ```
 
-### 2. Configure
+### 2. Initialize Database
+
+```bash
+# Initialize the DuckDB database (creates data/market.duckdb)
+uv run python src/data/init_db.py
+```
+
+This creates the local database that stores all historical OHLCV data, eliminating the need to fetch the same data repeatedly from APIs.
+
+### 3. Configure
 
 ```bash
 # Copy environment template
@@ -30,21 +40,22 @@ cp .env.example .env
 # - TG_BOT_TOKEN, TG_CHAT_ID (for Telegram notifications)
 ```
 
-### 3. Configure Settings
+### 4. Configure Settings
 
 Edit `config/config.json`:
 - Set your `core` and `spec` ticker lists
 - Adjust filters (min_price, min_avg_dollar_vol_20d, etc.)
 - Set `entry_top_n` to limit candidates
 - Configure `dip_min_pct` (default 0.06 = 6%) and `dip_max_pct` (default 0.12 = 12%) for entry dip range
+- Set `read_log_verbose` to `true` for detailed database update logs (default: `false`)
 
-### 4. Run Manually
+### 5. Run Manually
 
 ```bash
 ./scripts/trendguard_daily.sh
 ```
 
-### 5. Set Up Daily Schedule
+### 6. Set Up Daily Schedule
 
 ```bash
 ./scripts/setup_schedule.sh
@@ -57,6 +68,7 @@ See [STRUCTURE.md](STRUCTURE.md) for detailed file organization.
 ## Documentation
 
 - [Scheduling Guide](docs/SCHEDULING.md) - How to set up automated daily runs
+- [Database Architecture](docs/DATABASE.md) - How the local database works
 - [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
 ## Outputs

@@ -8,15 +8,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 import numpy as np
-from src.scanner import (
-    load_json, CONFIG_FILE,
-    download_daily_batch,
-    compute_features,
-    prescreen_pass,
-    trade_entry_signals,
-    passes_strict_trade_filters,
-    compute_pullback_depth_after_high,
-)
+from src.utils.utils import load_json, CONFIG_FILE
+from src.scanner import download_daily_batch
+from src.analysis.features import compute_features
+from src.analysis.signals import prescreen_pass, trade_entry_signals, passes_strict_trade_filters
+from src.analysis.indicators import compute_pullback_depth_after_high
 
 def test_symbol(sym: str, cfg: dict):
     """Test a single symbol through the entire filter pipeline."""

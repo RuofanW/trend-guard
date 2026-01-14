@@ -35,5 +35,5 @@
     "min_volume_ratio": 1.25,
   
     "holdings_csv": "robinhood_holdings.csv",
-    "read_log_verbose": true
+    "read_log_verbose": false
 }

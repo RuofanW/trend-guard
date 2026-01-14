@@ -9,9 +9,28 @@ trend-guard/
 ├── .env.example                 # Environment template (in root)
 │
 ├── src/                         # Core Python scripts
-│   ├── scanner.py               # Main scanner (market analysis)
+│   ├── scanner.py               # Main scanner (orchestration)
 │   ├── report.py                # HTML report generator
-│   └── notify.py                # Telegram notification sender
+│   ├── notify.py                # Telegram notification sender
+│   │
+│   ├── analysis/                # Market analysis logic
+│   │   ├── features.py          # Feature computation
+│   │   ├── signals.py           # Entry signal detection
+│   │   └── indicators.py        # Technical indicators (EMA, ATR, etc.)
+│   │
+│   ├── data/                    # Data layer
+│   │   ├── data_backend.py      # Database operations (DuckDB)
+│   │   ├── provider_yfinance.py # yfinance data provider
+│   │   └── init_db.py           # Database initialization
+│   │
+│   ├── portfolio/               # Portfolio management
+│   │   ├── holdings.py          # Holdings loading (Robinhood/CSV)
+│   │   └── position_management.py # Position tracking & management
+│   │
+│   └── utils/                   # Utilities
+│       ├── utils.py             # Common utilities (JSON, paths, etc.)
+│       ├── earnings.py          # Earnings detection
+│       └── universe.py          # Universe symbol loading
 │
 ├── scripts/                      # Executable scripts
 │   ├── trendguard_daily.sh      # Daily pipeline runner
@@ -38,6 +57,7 @@ trend-guard/
 │   └── launchd_stderr.log
 │
 └── data/                         # Data files (gitignored)
+    ├── market.duckdb            # DuckDB database (OHLCV data)
     ├── state.json               # State persistence (EMA21 timers, core flags)
     └── robinhood_holdings.csv   # CSV fallback for holdings
 ```
