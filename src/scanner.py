@@ -40,6 +40,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Add project root to path so we can import src modules
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -241,7 +242,10 @@ def main():
     bars = download_daily_batch(stage1_pass, start=start2)
     print(f"Got {len(bars)}/{len(stage1_pass)} successful reads")
 
-    for sym, df in bars.items():
+    # Parallelize feature computation for better performance
+    def compute_features_for_symbol(sym_df_tuple):
+        """Compute features for a single symbol - designed for parallel execution."""
+        sym, df = sym_df_tuple
         f = compute_features(
             df,
             ma_len,
@@ -256,11 +260,23 @@ def main():
             dip_rebound_window,
         )
         if f is None:
-            continue
-        filter_stats["evaluated"] += 1
+            return (sym, None)
         f.symbol = sym
-        features_map[sym] = f
+        return (sym, f)
+    
+    # Use ThreadPoolExecutor for feature computation (pandas releases GIL)
+    max_workers = min(8, len(bars))  # Use fewer workers for CPU-bound work
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(compute_features_for_symbol, (sym, df)): sym for sym, df in bars.items()}
+        for future in as_completed(futures):
+            sym, f = future.result()
+            if f is None:
+                continue
+            filter_stats["evaluated"] += 1
+            features_map[sym] = f
 
+    # Process features sequentially (filtering logic)
+    for sym, f in features_map.items():
         if prescreen_pass(f.close, f.avg_dollar_vol_20d, min_price, min_avg_dvol):
             filter_stats["passed_prescreen"] += 1
             pr, cb, why = trade_entry_signals(f)
