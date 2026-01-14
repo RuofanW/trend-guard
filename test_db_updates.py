@@ -14,7 +14,7 @@ Usage:
 
 import sys
 from datetime import datetime, timedelta, timezone
-from src.data_backend import (
+from src.data.data_backend import (
     update_symbols_batch,
     db_download,
     DB_PATH

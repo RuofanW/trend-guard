@@ -8,15 +8,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 import numpy as np
-from src.scanner import (
-    load_json, CONFIG_FILE,
-    download_daily_batch,
-    compute_features,
-    prescreen_pass,
-    trade_entry_signals,
-    passes_strict_trade_filters,
-    compute_pullback_depth_after_high,
-)
+from src.utils.utils import load_json, CONFIG_FILE
+from src.data.data_backend import db_download_batch
+from src.analysis.features import compute_features
+from src.analysis.signals import prescreen_pass, trade_entry_signals, passes_strict_trade_filters
+from src.analysis.indicators import compute_pullback_depth_after_high
 
 def test_symbol(sym: str, cfg: dict):
     """Test a single symbol through the entire filter pipeline."""
@@ -44,7 +40,8 @@ def test_symbol(sym: str, cfg: dict):
     # Download data
     print(f"\n1. Downloading data...")
     start = (datetime.now(timezone.utc) - timedelta(days=260 + 60)).strftime("%Y-%m-%d")
-    bars = download_daily_batch([sym], start=start)
+    end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    bars = db_download_batch([sym], start=start, end=end)
     
     if sym not in bars:
         print(f"   ✗ FAILED: Could not download data for {sym}")
