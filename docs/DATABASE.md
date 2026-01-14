@@ -69,12 +69,14 @@ CREATE TABLE meta_symbol (
 
 ## Key Functions
 
-### `update_symbols_batch(symbols, start_date, end_date)`
+### `update_symbols_batch(symbols, start_date, end_date, verbose=False)`
 
 Updates database for multiple symbols:
-- Checks all symbols in a single query
+- Uses temporary table with LEFT JOIN for efficient checking (handles 6790+ symbols)
+- Compares against today's date (not end_date) to correctly identify up-to-date symbols
 - Only fetches data for symbols that need updates
 - Uses yfinance with date range support for efficiency
+- Fetches only missing days (from last_db_date + 10 day buffer to end_date)
 
 ### `db_download_batch(symbols, start, end)`
 
@@ -137,7 +139,7 @@ con.close()
 
 ```bash
 uv run python -c "
-from src.data_backend import db_download
+from src.data.data_backend import db_download
 import pandas as pd
 df = db_download('AAPL', '2025-01-01', '2026-01-10')
 print(df.head(10))
@@ -148,9 +150,12 @@ print(df.head(10))
 
 The database update behavior is controlled by:
 
-- **Date ranges**: Automatically calculated based on `universe_stage1_days` and `universe_stage2_days` in `config.json`
+- **Date ranges**: Automatically calculated based on `stage1_days` and `stage2_days` in `config.json`
 - **Update buffer**: Fetches 10 days before the required start date to handle data revisions
-- **Update threshold**: Only updates if data is more than 2 days behind (handles weekends/holidays)
+- **Update logic**: 
+  - Compares database `last_date` against today's date (not tomorrow, which is used for API fetch)
+  - Only updates symbols where `last_date < today` (missing today's data)
+  - Uses temporary tables for efficient queries with large symbol lists (6790+ symbols)
 
 ## Troubleshooting
 
@@ -165,7 +170,7 @@ If you see `IOException: Could not set lock on file`:
 
 If symbols are missing data:
 1. Check logs for API errors
-2. Run update manually: `uv run python -c "from src.data_backend import update_symbols_batch; update_symbols_batch(['SYMBOL'], '2025-01-01', '2026-01-10', verbose=True)"`
+2. Run update manually: `uv run python -c "from src.data.data_backend import update_symbols_batch; update_symbols_batch(['SYMBOL'], '2025-01-01', '2026-01-10', verbose=True)"`
 
 ### Database Corruption
 

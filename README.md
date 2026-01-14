@@ -107,4 +107,5 @@ Daily outputs are saved in `outputs/YYYY-MM-DD/`:
   - Close/MA50 ≤ 1.25
   - ATR% ≤ 12%
   - Exclude if open ≥ close in all of the last 3 trading days
+- **Earnings filter**: Excludes symbols with earnings in the next 4 trading days
 

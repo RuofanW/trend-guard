@@ -16,7 +16,7 @@ Database:
 
 Setup:
   1. uv sync
-  2. uv run python src/init_db.py  # Initialize database
+  2. uv run python src/data/init_db.py  # Initialize database
   3. Configure config/config.json
   4. Set up .env with credentials
 
@@ -181,13 +181,13 @@ def main():
     bars = download_daily_batch(universe, start=start1)
     print(f"Got {len(bars)}/{len(universe)} successful reads")
 
-    for sym, df in bars.items():
-        s1 = compute_stage1_prescreen(df)
-        if s1 is None:
-            continue
-        _asof, close, avg_dvol = s1
-        if prescreen_pass(close, avg_dvol, min_price, min_avg_dvol):
-            stage1_rows.append({"symbol": sym, "asof": _asof, "close": close, "avg_dollar_vol_20d": avg_dvol})
+        for sym, df in bars.items():
+            s1 = compute_stage1_prescreen(df)
+            if s1 is None:
+                continue
+            _asof, close, avg_dvol = s1
+            if prescreen_pass(close, avg_dvol, min_price, min_avg_dvol):
+                stage1_rows.append({"symbol": sym, "asof": _asof, "close": close, "avg_dollar_vol_20d": avg_dvol})
 
     stage1_df = pd.DataFrame(stage1_rows)
     if stage1_df.empty:
@@ -241,8 +241,8 @@ def main():
     bars = download_daily_batch(stage1_pass, start=start2)
     print(f"Got {len(bars)}/{len(stage1_pass)} successful reads")
 
-    for sym, df in bars.items():
-        f = compute_features(
+        for sym, df in bars.items():
+            f = compute_features(
                 df,
                 ma_len,
                 ema_len,
@@ -254,20 +254,20 @@ def main():
                 dip_max_pct,
                 dip_lookback_days,
                 dip_rebound_window,
-        )
-        if f is None:
-            continue
-        filter_stats["evaluated"] += 1
-        f.symbol = sym
-        features_map[sym] = f
+            )
+            if f is None:
+                continue
+            filter_stats["evaluated"] += 1
+            f.symbol = sym
+            features_map[sym] = f
 
-        if prescreen_pass(f.close, f.avg_dollar_vol_20d, min_price, min_avg_dvol):
-            filter_stats["passed_prescreen"] += 1
-            pr, cb, why = trade_entry_signals(f)
-            if pr or cb:
-                filter_stats["had_entry_signal"] += 1
-                if passes_strict_trade_filters(f, strict_max_close_over_ma50, strict_max_atr_pct, min_volume_ratio, filter_stats):
-                    entry_rows.append(
+            if prescreen_pass(f.close, f.avg_dollar_vol_20d, min_price, min_avg_dvol):
+                filter_stats["passed_prescreen"] += 1
+                pr, cb, why = trade_entry_signals(f)
+                if pr or cb:
+                    filter_stats["had_entry_signal"] += 1
+                    if passes_strict_trade_filters(f, strict_max_close_over_ma50, strict_max_atr_pct, min_volume_ratio, filter_stats):
+                        entry_rows.append(
                             {
                                 "symbol": sym,
                                 "asof": f.asof,
@@ -287,7 +287,7 @@ def main():
                                 "reasons": why,
                                 "score": entry_score(f),
                             }
-                    )
+                        )
 
     # Print filter statistics
     print(f"\nStage 2 filter statistics:")

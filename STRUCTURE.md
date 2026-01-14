@@ -13,6 +13,7 @@ trend-guard/
 │   ├── report.py                # HTML report generator
 │   ├── notify.py                # Telegram notification sender
 │   │
+│   │
 │   ├── analysis/                # Market analysis logic
 │   │   ├── features.py          # Feature computation
 │   │   ├── signals.py           # Entry signal detection
@@ -20,7 +21,7 @@ trend-guard/
 │   │
 │   ├── data/                    # Data layer
 │   │   ├── data_backend.py      # Database operations (DuckDB)
-│   │   ├── provider_yfinance.py # yfinance data provider
+│   │   ├── provider_yfinance.py  # yfinance data provider (only provider)
 │   │   └── init_db.py           # Database initialization
 │   │
 │   ├── portfolio/               # Portfolio management
