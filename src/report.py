@@ -93,18 +93,49 @@ def make_report(out_dir: str) -> str:
                 html_parts.append(earnings_alerts[["symbol", "earnings_alert"]].to_html(index=False, escape=False))
         html_parts.append(snapshot.to_html(index=False, escape=False))
 
-    # Manage table
+    # Manage table - merge with snapshot for richer display
     if not manage.empty:
         html_parts.append("<h2>Manage Positions</h2>")
+        
+        # Try to merge with snapshot for richer data
+        if not snapshot.empty and "symbol" in snapshot.columns and "symbol" in manage.columns:
+            try:
+                snapshot_copy = snapshot.copy()
+                snapshot_copy["symbol"] = snapshot_copy["symbol"].astype(str).str.upper()
+                manage_copy = manage.copy()
+                manage_copy["symbol"] = manage_copy["symbol"].astype(str).str.upper()
+                
+                # Merge to add percent_change and equity
+                manage_enriched = manage_copy.merge(
+                    snapshot_copy[["symbol", "percent_change", "equity", "quantity"]],
+                    on="symbol",
+                    how="left"
+                )
+                
+                # Highlight profit trim exits
+                if "notes" in manage_enriched.columns:
+                    manage_enriched["notes"] = manage_enriched["notes"].astype(str)
+                    # Add styling for profit trim exits
+                    profit_trim_mask = manage_enriched["notes"].str.contains("PROFIT TRIM EXIT", case=False, na=False)
+                    if profit_trim_mask.any():
+                        html_parts.append("<p style='color: orange; font-weight: bold;'>⚠️ Profit Trim Exit signals detected (see notes column)</p>")
+            except Exception:
+                manage_enriched = manage
+        else:
+            manage_enriched = manage
+        
         # group by bucket
-        if "bucket" in manage.columns:
+        if "bucket" in manage_enriched.columns:
             for b in ["CORE", "TRADE", "SPEC", "UNKNOWN"]:
-                sub = manage[manage["bucket"] == b]
+                sub = manage_enriched[manage_enriched["bucket"] == b].copy()
                 if not sub.empty:
+                    # Sort by percent_change if available
+                    if "percent_change" in sub.columns:
+                        sub = sub.sort_values("percent_change", ascending=False, na_position="last")
                     html_parts.append(f"<h3>{b}</h3>")
                     html_parts.append(sub.to_html(index=False, escape=False))
         else:
-            html_parts.append(manage.to_html(index=False, escape=False))
+            html_parts.append(manage_enriched.to_html(index=False, escape=False))
     else:
         html_parts.append("<h2>Manage Positions</h2><p>(empty)</p>")
 

@@ -54,26 +54,64 @@ def manage_position(sym: str, f: FeatureRow, bucket: str, state: Dict, reclaim_d
         set_prev_flag(state, sym, f.asof, below_ma50=f.below_ma50)
         return " | ".join(notes)
 
-    if f.below_ma50:
-        notes.append("TRADE FAILED: below MA50 -> system says you should not hold; consider exit / wait for re-entry.")
-    else:
-        notes.append("TRADE OK: above MA50 environment.")
-
+    # Determine overall status and handle EMA21 reclaim timer
+    is_below_ema21 = f.close < f.ema21
+    reclaimed_ema21 = False  # Track if we just reclaimed EMA21 today
+    
+    # Handle timer: set on cross_down, clear on reclaim, track days
     if f.cross_down_ema21:
         rw[sym] = {"start_date": f.asof}
-        notes.append(f"TRADE: cross below EMA21 -> start {reclaim_days}-day reclaim timer.")
+        timer_start = f.asof
+        timer_days = 0
     elif watch is not None:
-        start = watch.get("start_date")
-        if (not f.below_ma50) and (f.close > f.ema21):
-            rw.pop(sym, None)
-            notes.append("TRADE: reclaimed EMA21 -> cancel timer (re-entry/add becomes valid if setup).")
+        timer_start = watch.get("start_date")
+        if timer_start:
+            timer_days = days_between(timer_start, f.asof)
         else:
-            if start:
-                d = days_between(start, f.asof)
-                if d >= reclaim_days:
-                    notes.append(f"TRADE EXIT REMINDER: still below EMA21 after {reclaim_days} days since {start}.")
+            timer_days = 0
+        # Clear timer if reclaimed EMA21 (regardless of MA50 status)
+        if f.close > f.ema21:
+            rw.pop(sym, None)
+            reclaimed_ema21 = True
+            timer_start = None
+            timer_days = None
+    else:
+        timer_start = None
+        timer_days = None
+    
+    # Determine status message
+    if f.below_ma50:
+        notes.append("TRADE FAILED: below MA50 -> system says you should not hold; consider exit / wait for re-entry.")
+        # Still track EMA21 timer even if below MA50 (for consistency)
+        if is_below_ema21 and timer_start is not None:
+            if timer_days is not None and timer_days >= reclaim_days:
+                notes.append(f"TRADE EXIT REMINDER: still below EMA21 after {reclaim_days} days since {timer_start}.")
+            elif timer_days is not None:
+                notes.append(f"TRADE TIMER: day {timer_days}/{reclaim_days} below EMA21 since {timer_start}.")
+    else:
+        # Above MA50 - status depends on EMA21
+        if is_below_ema21:
+            # Below EMA21: show warning with timer info
+            if f.cross_down_ema21:
+                # Just crossed today
+                notes.append(f"TRADE WARNING: above MA50 but crossed below EMA21 -> start {reclaim_days}-day reclaim timer.")
+            elif timer_start is not None:
+                # Timer exists
+                if timer_days is not None and timer_days >= reclaim_days:
+                    notes.append(f"TRADE WARNING: above MA50 but still below EMA21 after {reclaim_days} days since {timer_start}.")
+                elif timer_days is not None:
+                    notes.append(f"TRADE WARNING: above MA50 but below EMA21 (day {timer_days}/{reclaim_days} since {timer_start}).")
                 else:
-                    notes.append(f"TRADE TIMER: day {d}/{reclaim_days} below EMA21 since {start}.")
+                    notes.append("TRADE WARNING: above MA50 but below EMA21.")
+            else:
+                # Below EMA21 but no timer (shouldn't happen, but handle edge case)
+                notes.append("TRADE WARNING: above MA50 but below EMA21.")
+        else:
+            # Above both MA50 and EMA21
+            if reclaimed_ema21:
+                notes.append("TRADE OK: above MA50 and EMA21 -> reclaimed EMA21, timer canceled.")
+            else:
+                notes.append("TRADE OK: above MA50 environment.")
 
     pr, cb, why = trade_entry_signals(f)
     if pr or cb:

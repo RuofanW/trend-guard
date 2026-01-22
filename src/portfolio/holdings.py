@@ -43,11 +43,16 @@ def _rh_login_and_verify(rh, username: str, password: str, mfa_code: Optional[st
     print("  RH auth: verified OK")
 
 
-def load_holdings_from_robinhood(date_str: str) -> List[str]:
+def load_holdings_from_robinhood(date_str: str, account_type: Optional[str] = None) -> List[str]:
     """
     Uses robin_stocks to login and fetch current equity positions.
     Returns tickers (uppercased; '.' converted to '-').
     Saves a CSV snapshot of holdings for the given date (overwrites if exists).
+    
+    Args:
+        date_str: Date string for snapshot filename
+        account_type: Optional account type filter. If "trading", filters for trading account.
+                     If None, uses default account (backward compatible).
     """
     try:
         import robin_stocks.robinhood as rh  # type: ignore
@@ -60,7 +65,68 @@ def load_holdings_from_robinhood(date_str: str) -> List[str]:
 
     _rh_login_and_verify(rh, username, password, mfa_code)
 
-    holdings = rh.build_holdings()
+    # If account_type is "trading", get positions from trading account
+    if account_type == "trading":
+        # Get all open positions and filter by account type
+        positions = rh.get_open_stock_positions()
+        if positions is None:
+            positions = []
+        
+        # Filter for trading account (brokerage_account_type == "trading")
+        trading_positions = [p for p in positions if p.get('brokerage_account_type', '').lower() == 'trading']
+        
+        if not trading_positions:
+            # If no positions with brokerage_account_type="trading", try to find by account nickname or other means
+            # For now, fall back to checking all accounts via API
+            try:
+                import requests
+                token = rh.account.SESSION.headers.get('Authorization', '').replace('Bearer ', '')
+                headers = {
+                    'Authorization': f'Bearer {token}',
+                    'Accept': 'application/json'
+                }
+                response = requests.get('https://api.robinhood.com/accounts/', headers=headers)
+                if response.status_code == 200:
+                    accounts_data = response.json()
+                    # Find trading account
+                    trading_account = None
+                    for acc in accounts_data.get('results', []):
+                        # Check if this is the trading account (might be identified by nickname or type)
+                        acc_nickname = acc.get('nickname', '').lower()
+                        if 'trading' in acc_nickname or acc.get('brokerage_account_type', '').lower() == 'trading':
+                            trading_account = acc
+                            break
+                    
+                    if trading_account:
+                        # Get positions for this account
+                        account_url = trading_account.get('url')
+                        account_num = trading_account.get('account_number')
+                        # Filter positions by this account
+                        trading_positions = [p for p in positions if p.get('account_number') == account_num]
+            except Exception as e:
+                print(f"  WARNING: Could not filter by trading account: {e}")
+                trading_positions = []
+        
+        # Convert positions to holdings format
+        holdings = {}
+        for pos in trading_positions:
+            symbol = pos.get('symbol')
+            if symbol:
+                quantity = float(pos.get('quantity', 0))
+                if quantity > 0:
+                    avg_price = float(pos.get('average_buy_price', 0))
+                    current_price = float(pos.get('average_buy_price', 0))  # Will be updated by build_holdings logic
+                    equity = quantity * current_price if current_price > 0 else 0
+                    holdings[symbol] = {
+                        'quantity': quantity,
+                        'average_buy_price': avg_price,
+                        'equity': equity,
+                        'percent_change': 0.0,  # Will need to calculate
+                    }
+    else:
+        # Default behavior: use build_holdings (backward compatible)
+        holdings = rh.build_holdings()
+    
     if holdings is None:
         # None is more suspicious than {}.
         raise RuntimeError("Robinhood build_holdings() returned None (unexpected).")

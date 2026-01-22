@@ -6,7 +6,7 @@ Automated daily market scanner that analyzes stocks, generates trading signals, 
 
 - **Market Scanning**: Scans NYSE+NASDAQ for entry opportunities
 - **Position Management**: Tracks your holdings with CORE/TRADE/SPEC buckets
-- **Automated Scheduling**: Runs daily at 12:00 PM PST (even when screen is locked)
+- **Automated Scheduling**: Runs daily at 12:15 PM PST (even when screen is locked)
 - **Robinhood Integration**: Auto-loads holdings from Robinhood API
 - **Local Database**: Uses DuckDB for fast data storage and retrieval (no repeated API calls)
 - **HTML Reports**: Generates visual reports with charts

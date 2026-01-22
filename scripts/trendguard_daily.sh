@@ -36,10 +36,21 @@ log "=== Starting daily trend-guard pipeline ==="
 
 # Step 1: Run scanner
 log "Step 1: Running scanner..."
+
+# Check for stuck scanner processes and kill them before starting
+STUCK_PROCS=$(ps aux | grep -E "[u]v run python src/scanner.py|[P]ython.*scanner.py" | grep -v grep | awk '{print $2}')
+if [ -n "$STUCK_PROCS" ]; then
+    log "⚠ Found stuck scanner processes (PIDs: $STUCK_PROCS) - killing them"
+    echo "$STUCK_PROCS" | xargs kill -9 2>/dev/null || true
+    sleep 2
+fi
+
+# Run scanner (normal execution - if it hangs, user can manually kill)
 if "$UV_CMD" run python src/scanner.py >> "$LOG_FILE" 2>&1; then
     log "✓ Scanner completed successfully"
 else
-    log "✗ Scanner failed - check logs"
+    EXIT_CODE=$?
+    log "✗ Scanner failed (exit code: $EXIT_CODE) - check logs"
     exit 1
 fi
 

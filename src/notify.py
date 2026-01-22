@@ -17,17 +17,105 @@ def telegram_send(text: str) -> None:
     if not token or not chat_id:
         raise RuntimeError("Missing TG_BOT_TOKEN or TG_CHAT_ID env vars.")
 
+    # Telegram has a 4096 character limit per message
+    # If message is too long, split it into multiple messages
+    MAX_LENGTH = 4096
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    resp = requests.post(
-        url,
-        data={
-            "chat_id": chat_id,
-            "text": text,
-            "disable_web_page_preview": True,
-        },
-        timeout=20,
-    )
-    resp.raise_for_status()
+    
+    if len(text) <= MAX_LENGTH:
+        # Message fits in one send
+        try:
+            resp = requests.post(
+                url,
+                data={
+                    "chat_id": chat_id,
+                    "text": text,
+                    "disable_web_page_preview": True,
+                },
+                timeout=20,
+            )
+            resp.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            # Provide more detailed error information
+            error_detail = ""
+            try:
+                error_json = resp.json()
+                error_detail = f" - {error_json.get('description', 'Unknown error')}"
+            except:
+                error_detail = f" - Status: {resp.status_code}"
+            raise RuntimeError(f"Telegram API error: {e}{error_detail}") from e
+    else:
+        # Split message into multiple parts
+        lines = text.split('\n')
+        current_part = []
+        current_length = 0
+        part_num = 1
+        total_parts = (len(text) // MAX_LENGTH) + 1
+        
+        for line in lines:
+            line_length = len(line) + 1  # +1 for newline
+            if current_length + line_length > MAX_LENGTH - 50:  # Leave room for header
+                # Send current part
+                part_text = '\n'.join(current_part)
+                if part_num == 1:
+                    part_text = f"{part_text}\n\n... (continued in next message)"
+                else:
+                    part_text = f"... (part {part_num}/{total_parts}) ...\n\n{part_text}"
+                    if part_num < total_parts:
+                        part_text = f"{part_text}\n\n... (continued)"
+                
+                try:
+                    resp = requests.post(
+                        url,
+                        data={
+                            "chat_id": chat_id,
+                            "text": part_text,
+                            "disable_web_page_preview": True,
+                        },
+                        timeout=20,
+                    )
+                    resp.raise_for_status()
+                except requests.exceptions.HTTPError as e:
+                    error_detail = ""
+                    try:
+                        error_json = resp.json()
+                        error_detail = f" - {error_json.get('description', 'Unknown error')}"
+                    except:
+                        error_detail = f" - Status: {resp.status_code}"
+                    raise RuntimeError(f"Telegram API error (part {part_num}): {e}{error_detail}") from e
+                
+                # Start new part
+                current_part = [line]
+                current_length = line_length
+                part_num += 1
+            else:
+                current_part.append(line)
+                current_length += line_length
+        
+        # Send final part
+        if current_part:
+            part_text = '\n'.join(current_part)
+            if part_num > 1:
+                part_text = f"... (part {part_num}/{total_parts}) ...\n\n{part_text}"
+            try:
+                resp = requests.post(
+                    url,
+                    data={
+                        "chat_id": chat_id,
+                        "text": part_text,
+                        "disable_web_page_preview": True,
+                    },
+                    timeout=20,
+                )
+                resp.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                error_detail = ""
+                try:
+                    error_json = resp.json()
+                    error_detail = f" - {error_json.get('description', 'Unknown error')}"
+                except:
+                    error_detail = f" - Status: {resp.status_code}"
+                raise RuntimeError(f"Telegram API error (part {part_num}): {e}{error_detail}") from e
 
 
 def build_summary(out_dir: str) -> str:
@@ -90,44 +178,158 @@ def build_summary(out_dir: str) -> str:
     else:
         lines.append("📊 Entry Candidates: (missing file)")
 
-    # Holdings snapshot - show big movers
-    if os.path.exists(snapshot_path):
+    # Detailed holdings view - merge snapshot and manage data
+    if os.path.exists(manage_path) and os.path.exists(snapshot_path):
         try:
+            manage = pd.read_csv(manage_path)
             snapshot = pd.read_csv(snapshot_path)
-            if "percent_change" in snapshot.columns and "symbol" in snapshot.columns:
-                # Convert to numeric
-                snapshot["percent_change"] = pd.to_numeric(snapshot["percent_change"], errors="coerce")
+            
+            # Merge snapshot and manage data on symbol
+            snapshot["symbol"] = snapshot["symbol"].astype(str).str.upper()
+            manage["symbol"] = manage["symbol"].astype(str).str.upper()
+            
+            # Convert numeric columns
+            for col in ["percent_change", "equity", "close"]:
+                if col in snapshot.columns:
+                    snapshot[col] = pd.to_numeric(snapshot[col], errors="coerce")
+                if col in manage.columns:
+                    manage[col] = pd.to_numeric(manage[col], errors="coerce")
+            
+            # Merge data
+            holdings = manage.merge(
+                snapshot[["symbol", "percent_change", "equity", "quantity", "average_buy_price"]],
+                on="symbol",
+                how="left"
+            )
+            
+            if not holdings.empty and "bucket" in holdings.columns:
+                counts = holdings["bucket"].value_counts().to_dict()
+                core = counts.get("CORE", 0)
+                trade = counts.get("TRADE", 0)
+                spec = counts.get("SPEC", 0)
+                unk = counts.get("UNKNOWN", 0)
+                lines.append(f"💼 Holdings: CORE {core} | TRADE {trade} | SPEC {spec} | UNKNOWN {unk}")
+                lines.append("")
                 
-                # Big winners (top 3)
-                winners = snapshot.nlargest(3, "percent_change")
-                if not winners.empty and winners["percent_change"].iloc[0] > 5:
-                    lines.append("📈 Top Gainers:")
-                    for _, r in winners.iterrows():
+                # Group by bucket and show all holdings
+                for bucket_name in ["CORE", "TRADE", "SPEC", "UNKNOWN"]:
+                    bucket_holdings = holdings[holdings["bucket"] == bucket_name].copy()
+                    if bucket_holdings.empty:
+                        continue
+                    
+                    lines.append(f"📦 {bucket_name} ({len(bucket_holdings)}):")
+                    
+                    # Sort by percent_change (descending) for better visibility
+                    if "percent_change" in bucket_holdings.columns:
+                        bucket_holdings = bucket_holdings.sort_values("percent_change", ascending=False, na_position="last")
+                    
+                    for _, r in bucket_holdings.iterrows():
                         sym = r.get("symbol", "?")
-                        pct = r.get("percent_change", 0)
-                        equity = r.get("equity", 0)
-                        if pd.notna(pct) and pct > 5:
-                            equity_str = f"${equity:,.0f}" if pd.notna(equity) else "N/A"
-                            lines.append(f"  🟢 {sym}: +{pct:.1f}% ({equity_str})")
+                        close = r.get("close", None)
+                        pct = r.get("percent_change", None)
+                        equity = r.get("equity", None)
+                        notes = r.get("notes", "")
+                        avg_buy_price = r.get("average_buy_price", None)  # Get from merged data
+                        
+                        # Format values
+                        close_str = f"${close:.2f}" if pd.notna(close) else "N/A"
+                        pct_str = f"{pct:+.1f}%" if pd.notna(pct) else "N/A"
+                        equity_str = f"${equity:,.0f}" if pd.notna(equity) else "N/A"
+                        
+                        # Determine emoji based on performance and alerts
+                        emoji = "  "
+                        if pd.notna(pct):
+                            if pct > 5:
+                                emoji = "🟢"
+                            elif pct < -5:
+                                emoji = "🔴"
+                            elif pct > 0:
+                                emoji = "🟡"
+                        
+                        # Check for important alerts
+                        has_exit = "EXIT" in str(notes).upper()
+                        has_warning = "WARNING" in str(notes).upper()
+                        has_profit_trim = "PROFIT TRIM" in str(notes).upper()
+                        has_earnings = "EARNINGS" in str(notes).upper()
+                        has_reclaim_timer = "TIMER" in str(notes).upper() or "RECLAIM" in str(notes).upper()
+                        
+                        if has_exit or has_warning or has_profit_trim:
+                            emoji = "⚠️"
+                        elif has_reclaim_timer:
+                            emoji = "⏰"  # Timer emoji for reclaim warnings
+                        elif has_earnings:
+                            emoji = "📅"
+                        
+                        # Build the line
+                        line = f"{emoji} {sym}: {close_str} ({pct_str}) | Equity: {equity_str}"
+                        lines.append(line)
+                        
+                        # Add notes if there are important alerts
+                        if notes and pd.notna(notes) and str(notes).strip():
+                            # Extract all alert parts
+                            msg_parts = [p.strip() for p in str(notes).split("|") if p.strip()]
+                            if msg_parts:
+                                # Show profit trim info prominently with more details
+                                if has_profit_trim:
+                                    profit_msg = next((p for p in msg_parts if "PROFIT TRIM" in p.upper()), None)
+                                    if profit_msg:
+                                        # Extract details from profit trim message
+                                        # Format: "🔄 PROFIT TRIM EXIT: gain=X.XATR, close=XX.XX < HH10-2ATR=XX.XX"
+                                        lines.append(f"    {profit_msg}")
+                                        # Add buy price and gain percentage context
+                                        if pd.notna(avg_buy_price) and pd.notna(close) and avg_buy_price > 0:
+                                            gain_pct = ((close - avg_buy_price) / avg_buy_price) * 100
+                                            lines.append(f"    Buy: ${avg_buy_price:.2f} | Gain: {gain_pct:+.1f}%")
+                                elif has_reclaim_timer:
+                                    # Show reclaim timer messages prominently
+                                    timer_msg = next((p for p in msg_parts if "TIMER" in p.upper() or "RECLAIM" in p.upper() or "EMA21" in p.upper()), None)
+                                    if timer_msg:
+                                        lines.append(f"    ⏰ {timer_msg}")
+                                    else:
+                                        # Fallback: show first part that mentions timer/reclaim
+                                        for part in msg_parts:
+                                            if "TIMER" in part.upper() or "RECLAIM" in part.upper() or "EMA21" in part.upper():
+                                                lines.append(f"    ⏰ {part}")
+                                                break
+                                else:
+                                    # Show first alert for other cases
+                                    lines.append(f"    {msg_parts[0]}")
+                    
                     lines.append("")
                 
-                # Big losers (bottom 3)
-                losers = snapshot.nsmallest(3, "percent_change")
-                if not losers.empty and losers["percent_change"].iloc[0] < -5:
-                    lines.append("📉 Top Losers:")
-                    for _, r in losers.iterrows():
-                        sym = r.get("symbol", "?")
-                        pct = r.get("percent_change", 0)
-                        equity = r.get("equity", 0)
-                        if pd.notna(pct) and pct < -5:
-                            equity_str = f"${equity:,.0f}" if pd.notna(equity) else "N/A"
-                            lines.append(f"  🔴 {sym}: {pct:.1f}% ({equity_str})")
-                    lines.append("")
-        except (pd.errors.EmptyDataError, ValueError):
-            pass
-
-    # Manage positions - detailed alerts
-    if os.path.exists(manage_path):
+                # Summary of alerts (including reclaim timers)
+                if "notes" in holdings.columns:
+                    flagged = holdings[
+                        holdings["notes"].astype(str).str.contains("EXIT|FAILED|WARNING|REMINDER|EARNINGS|PROFIT TRIM|TIMER|RECLAIM", case=False, na=False)
+                    ]
+                    if not flagged.empty:
+                        lines.append("⚠️ Summary of Alerts:")
+                        for _, r in flagged.iterrows():
+                            sym = r.get("symbol", "?")
+                            bucket = r.get("bucket", "?")
+                            notes_str = str(r.get("notes", ""))
+                            # Extract most relevant alert
+                            msg_parts = [p.strip() for p in notes_str.split("|") if p.strip()]
+                            if msg_parts:
+                                # Prioritize profit trim, then timer, then other alerts
+                                priority_msg = None
+                                for part in msg_parts:
+                                    if "PROFIT TRIM" in part.upper():
+                                        priority_msg = part
+                                        break
+                                    elif "TIMER" in part.upper() or "RECLAIM" in part.upper():
+                                        if not priority_msg:  # Only set if we haven't found profit trim
+                                            priority_msg = f"⏰ {part}"
+                                if not priority_msg:
+                                    priority_msg = msg_parts[0]
+                                lines.append(f"  • {sym} ({bucket}): {priority_msg}")
+                        lines.append("")
+            else:
+                lines.append("💼 Holdings: (bucket col missing)")
+        except Exception as e:
+            lines.append(f"💼 Holdings: Error loading data - {e}")
+    elif os.path.exists(manage_path):
+        # Fallback: just show manage data
         try:
             manage = pd.read_csv(manage_path)
             if "bucket" in manage.columns:
@@ -139,29 +341,6 @@ def build_summary(out_dir: str) -> str:
                 lines.append(f"💼 Holdings: CORE {core} | TRADE {trade} | SPEC {spec} | UNKNOWN {unk}")
             else:
                 lines.append("💼 Holdings: (bucket col missing)")
-
-            # Highlight warnings/exits with more detail
-            if "notes" in manage.columns and "symbol" in manage.columns and "close" in manage.columns:
-                notes = manage[["symbol", "notes", "close", "bucket"]].astype(str)
-                # Filter for important alerts
-                flagged = notes[notes["notes"].str.contains("EXIT|FAILED|WARNING|REMINDER|EARNINGS", case=False, na=False)]
-                if not flagged.empty:
-                    lines.append("")
-                    lines.append("⚠️ Position Alerts:")
-                    for _, r in flagged.head(10).iterrows():
-                        s = r["symbol"]
-                        bucket = r.get("bucket", "?")
-                        close = r.get("close", "?")
-                        msg = r["notes"]
-                        # Extract first meaningful part
-                        msg_parts = [p.strip() for p in msg.split("|") if p.strip()]
-                        msg_short = msg_parts[0] if msg_parts else msg[:50]
-                        
-                        close_str = f"${float(close):.2f}" if close != "?" and close.replace(".", "").isdigit() else close
-                        lines.append(f"  • {s} ({bucket}): {close_str}")
-                        lines.append(f"    {msg_short}")
-                else:
-                    lines.append("  ✅ No alerts")
         except (pd.errors.EmptyDataError, ValueError):
             lines.append("💼 Holdings: (empty file)")
     else:

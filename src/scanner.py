@@ -68,23 +68,33 @@ from src.utils.universe import load_universe_symbols
 from src.data.data_backend import db_download_batch, update_symbols_batch
 from src.analysis.features import compute_stage1_prescreen, compute_features, FeatureRow
 from src.analysis.signals import prescreen_pass, trade_entry_signals, passes_strict_trade_filters, entry_score
+from src.analysis.indicators import atr
 from src.portfolio.position_management import manage_position
 from src.utils.earnings import get_earnings_date, has_earnings_soon
 
 
 def download_daily_batch(
-    symbols: List[str], start: str, max_retries: int = 3, base_delay: float = 5.0
+    symbols: List[str], start: str, end: str = None, max_retries: int = 3, base_delay: float = 5.0
 ) -> Dict[str, pd.DataFrame]:
     """
     Download data for multiple symbols from database in a single batch query.
     Much more efficient than per-symbol queries.
     Note: max_retries and base_delay are kept for API compatibility but not used.
+    
+    Args:
+        symbols: List of symbols to download
+        start: Start date in YYYY-MM-DD format
+        end: End date in YYYY-MM-DD format (should be provided for timezone consistency)
+            If None, defaults to today in UTC (not recommended - pass run_date instead)
     """
     if not symbols:
         return {}
     
-    # Use today's date - always fetch the latest available data including today
-    end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Use provided end date, or default to today's UTC date
+    # WARNING: The default uses UTC, which may cause timezone inconsistencies.
+    # Always pass end=run_date (LA timezone) when calling from main() for consistency.
+    if end is None:
+        end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
     # Single batch query for all symbols - much faster!
     return db_download_batch(symbols, start, end)
@@ -162,9 +172,13 @@ def main():
     # -------------------------
     print("\nUpdating database with missing data...")
     # Always request data up to today (yfinance's end is exclusive, so we add 1 day to include today)
+    # Use the same date as run_date (LA timezone) for consistency
     # This ensures we get today's data if available (even if market hasn't closed yet)
-    start1 = (datetime.now(timezone.utc) - timedelta(days=stage2_days + 30)).strftime("%Y-%m-%d")
-    end_date = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")  # Tomorrow to include today
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(tz_name)
+    today_la = datetime.now(tz).date()
+    start1 = (today_la - timedelta(days=stage2_days + 30)).strftime("%Y-%m-%d")
+    end_date = (today_la + timedelta(days=1)).strftime("%Y-%m-%d")  # Tomorrow to include today
     
     # Update universe symbols for Stage 1 date range
     read_log_verbose = bool(cfg.get("read_log_verbose", False))
@@ -179,7 +193,7 @@ def main():
 
     print("\nStage 1: quick prescreen ...")
     print(f"  Reading {len(universe)} symbols from database...", end=" ", flush=True)
-    bars = download_daily_batch(universe, start=start1)
+    bars = download_daily_batch(universe, start=start1, end=run_date)
     print(f"Got {len(bars)}/{len(universe)} successful reads")
 
     for sym, df in bars.items():
@@ -211,7 +225,8 @@ def main():
             stage1_pass.append(s)
 
     # Update database for Stage 2 symbols
-    start2 = (datetime.now(timezone.utc) - timedelta(days=stage2_days + 60)).strftime("%Y-%m-%d")
+    # Use same LA timezone as start1 and end_date for consistency
+    start2 = (today_la - timedelta(days=stage2_days + 60)).strftime("%Y-%m-%d")
     print(f"\nUpdating database for Stage 2 symbols ({len(stage1_pass)} symbols, range {start2} to {end_date})...")
     updated_count2 = update_symbols_batch(stage1_pass, start2, end_date, verbose=read_log_verbose)
     print(f"  Updated {updated_count2}/{len(stage1_pass)} symbols")
@@ -239,7 +254,7 @@ def main():
 
     print("\nStage 2: compute entry signals & manage holdings ...")
     print(f"  Reading {len(stage1_pass)} symbols from database...", end=" ", flush=True)
-    bars = download_daily_batch(stage1_pass, start=start2)
+    bars = download_daily_batch(stage1_pass, start=start2, end=run_date)
     print(f"Got {len(bars)}/{len(stage1_pass)} successful reads")
 
     # Parallelize feature computation for better performance
@@ -284,24 +299,24 @@ def main():
                 filter_stats["had_entry_signal"] += 1
                 if passes_strict_trade_filters(f, strict_max_close_over_ma50, strict_max_atr_pct, min_volume_ratio, filter_stats):
                     entry_rows.append({
-                        "symbol": sym,
-                        "asof": f.asof,
-                        "close": f.close,
-                        "ma50": f.ma50,
-                        "ema21": f.ema21,
-                        "atr14": f.atr14,
-                        "atr_pct": f.atr_pct,
-                        "avg_dollar_vol_20d": f.avg_dollar_vol_20d,
-                        "close_over_ma50": f.close_over_ma50,
-                        "ma50_slope_10d": f.ma50_slope_10d,
-                        "range_pct_15d": f.range_pct_15d,
-                        "recent_dip_from_20d_high": f.recent_dip_from_20d_high,
-                        "volume_ratio": f.volume_ratio,
-                        "signal_pullback_reclaim": pr,
-                        "signal_consolidation_breakout": cb,
-                        "reasons": why,
-                        "score": entry_score(f),
-                    })
+                            "symbol": sym,
+                            "asof": f.asof,
+                            "close": f.close,
+                            "ma50": f.ma50,
+                            "ema21": f.ema21,
+                            "atr14": f.atr14,
+                            "atr_pct": f.atr_pct,
+                            "avg_dollar_vol_20d": f.avg_dollar_vol_20d,
+                            "close_over_ma50": f.close_over_ma50,
+                            "ma50_slope_10d": f.ma50_slope_10d,
+                            "range_pct_15d": f.range_pct_15d,
+                            "recent_dip_from_20d_high": f.recent_dip_from_20d_high,
+                            "volume_ratio": f.volume_ratio,
+                            "signal_pullback_reclaim": pr,
+                            "signal_consolidation_breakout": cb,
+                            "reasons": why,
+                            "score": entry_score(f),
+                        })
 
     # Print filter statistics
     print(f"\nStage 2 filter statistics:")
@@ -323,8 +338,8 @@ def main():
         entry_df = entry_df.sort_values(by="score", ascending=False).head(entry_top_n)
         
         # Filter out entry candidates with earnings in next 4 trading days (after ranking to minimize API calls)
-        # Use today's date for earnings check
-        today = datetime.now(timezone.utc)
+        # Use LA timezone for consistency with run_date
+        today = datetime.now(tz)
         entry_df_filtered = entry_df[~entry_df["symbol"].apply(
             lambda sym: has_earnings_soon(sym, today, days_ahead=4)
         )].copy()
@@ -339,8 +354,28 @@ def main():
     entry_df.to_csv(out_entry, index=False)
 
     # Manage holdings
-    # Use today's date for earnings alerts
-    today = datetime.now(timezone.utc)
+    # Load holdings snapshot to get average_buy_price for profit trimming
+    snapshot_path = os.path.join(out_dir, "holdings_snapshot.csv")
+    holdings_snapshot = {}
+    if os.path.exists(snapshot_path):
+        try:
+            snapshot_df = pd.read_csv(snapshot_path)
+            for _, row in snapshot_df.iterrows():
+                sym = str(row.get("symbol", "")).upper()
+                avg_buy_price = row.get("average_buy_price", None)
+                if pd.notna(avg_buy_price):
+                    try:
+                        holdings_snapshot[sym] = {
+                            "average_buy_price": float(avg_buy_price),
+                            "percent_change": float(row.get("percent_change", 0)) if pd.notna(row.get("percent_change")) else 0.0,
+                        }
+                    except (ValueError, TypeError):
+                        pass
+        except Exception as e:
+            print(f"  WARNING: Failed to load holdings snapshot: {e}")
+    
+    # Use LA timezone for earnings alerts (consistent with run_date)
+    today = datetime.now(tz)
     tomorrow = today + timedelta(days=1)
     for sym in held_syms:
         f = features_map.get(sym)
@@ -358,6 +393,66 @@ def main():
             bucket = "TRADE"
 
         notes = manage_position(sym, f, bucket, state, reclaim_days)
+        
+        # Profit trimming logic for existing holdings
+        # Track peak gain: once gain > 1 ATR, "lock in" profit trim eligibility
+        # This allows exit on pullback even if current gain drops below 1 ATR
+        if sym in holdings_snapshot and sym in bars:
+            avg_buy_price = holdings_snapshot[sym]["average_buy_price"]
+            df = bars[sym]
+            
+            if len(df) >= 14 and avg_buy_price > 0:
+                # Calculate ATR
+                df_with_atr = df.copy()
+                df_with_atr["ATR14"] = atr(df_with_atr, 14)
+                current_atr = float(df_with_atr["ATR14"].iloc[-1])
+                
+                if pd.notna(current_atr) and current_atr > 0:
+                    # Calculate current gain in ATR terms
+                    current_close = f.close
+                    gain_dollars = current_close - avg_buy_price
+                    gain_in_atr = gain_dollars / current_atr
+                    
+                    # Calculate peak gain from available historical data
+                    # Use vectorized operations (much faster than iterating)
+                    # Note: We don't have purchase date, so we calculate from all available data
+                    # Days before purchase will show negative gains, which is fine
+                    valid_atr_mask = pd.notna(df_with_atr["ATR14"]) & (df_with_atr["ATR14"] > 0)
+                    if valid_atr_mask.any():
+                        # Calculate gain in ATR terms for all days with valid ATR
+                        gains_dollars = df_with_atr.loc[valid_atr_mask, "Close"] - avg_buy_price
+                        gains_atr = gains_dollars / df_with_atr.loc[valid_atr_mask, "ATR14"]
+                        peak_gain_atr_from_history = float(gains_atr.max()) if len(gains_atr) > 0 else 0.0
+                    else:
+                        peak_gain_atr_from_history = 0.0
+                    
+                    # Track peak gain in state (persists across runs)
+                    # This ensures we don't lose peak gains from previous runs or data windows
+                    profit_trim_state = state.setdefault("profit_trim", {})
+                    sym_pt_state = profit_trim_state.setdefault(sym, {})
+                    stored_peak_gain_atr = sym_pt_state.get("peak_gain_atr", 0.0)
+                    
+                    # Peak gain is the maximum of: historical calculation, stored value, and current gain
+                    peak_gain_atr = max(peak_gain_atr_from_history, stored_peak_gain_atr, gain_in_atr)
+                    
+                    # Update stored peak gain if we found a higher value
+                    if peak_gain_atr > stored_peak_gain_atr:
+                        sym_pt_state["peak_gain_atr"] = peak_gain_atr
+                    
+                    # Check exit condition: if peak gain ever exceeded 1 ATR, check pullback
+                    # This allows exit even if current gain dropped below 1 ATR due to pullback
+                    if peak_gain_atr > 1.0:
+                        # Calculate HH_10: highest high over past 10 days
+                        if len(df) >= 10:
+                            hh_10 = float(df["High"].iloc[-10:].max())
+                            exit_threshold = hh_10 - 2 * current_atr
+                            
+                            if current_close < exit_threshold:
+                                # Show both current gain and peak gain for context
+                                notes = f"🔄 PROFIT TRIM EXIT: peak_gain={peak_gain_atr:.1f}ATR, current_gain={gain_in_atr:.1f}ATR, close={current_close:.2f} < HH10-2ATR={exit_threshold:.2f} | " + notes
+                    
+                    # Save updated state
+                    state["profit_trim"] = profit_trim_state
         
         # Add earnings alerts for holdings
         earnings_date_str = get_earnings_date(sym)
@@ -403,13 +498,8 @@ def main():
     except Exception as e:
         print(f"WARNING: report generation failed: {e}")
 
-    # Notify (Telegram)
-    try:
-        from src.notify import notify_run
-        notify_run(out_dir)
-        print("Sent Telegram notification.")
-    except Exception as e:
-        print(f"WARNING: Telegram notify failed: {e}")
+    # Note: Telegram notification is handled by the wrapper script (trendguard_daily.sh)
+    # to avoid duplicate notifications when running via scheduled job
 
 
 if __name__ == "__main__":
