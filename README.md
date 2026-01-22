@@ -7,7 +7,7 @@ Automated daily market scanner that analyzes stocks, generates trading signals, 
 - **Market Scanning**: Scans NYSE+NASDAQ for entry opportunities
 - **Position Management**: Tracks your holdings with CORE/TRADE/SPEC buckets
 - **Automated Scheduling**: Runs daily at 12:15 PM PST (even when screen is locked)
-- **Robinhood Integration**: Auto-loads holdings from Robinhood API
+- **Multi-Broker Support**: Auto-loads holdings from Robinhood or Webull API
 - **Local Database**: Uses DuckDB for fast data storage and retrieval (no repeated API calls)
 - **HTML Reports**: Generates visual reports with charts
 - **Telegram Notifications**: Sends daily summaries via Telegram
@@ -36,14 +36,20 @@ This creates the local database that stores all historical OHLCV data, eliminati
 cp .env.example .env
 
 # Edit .env with your credentials
-# - RH_USERNAME, RH_PASSWORD (for Robinhood)
-# - TG_BOT_TOKEN, TG_CHAT_ID (for Telegram notifications)
+# For Robinhood:
+#   - RH_USERNAME, RH_PASSWORD, RH_MFA_CODE (optional)
+# For Webull:
+#   - WEBULL_USERNAME, WEBULL_PASSWORD
+#   - WEBULL_DEVICE_ID (optional), WEBULL_REGION_ID (default: 6 for US)
+# For Telegram:
+#   - TG_BOT_TOKEN, TG_CHAT_ID
 ```
 
 ### 4. Configure Settings
 
 Edit `config/config.json`:
 - Set your `core` and `spec` ticker lists
+- Set `broker` to `"robinhood"` or `"webull"` (default: `"robinhood"`)
 - Adjust filters (min_price, min_avg_dollar_vol_20d, etc.)
 - Set `entry_top_n` to limit candidates
 - Configure `dip_min_pct` (default 0.06 = 6%) and `dip_max_pct` (default 0.12 = 12%) for entry dip range
