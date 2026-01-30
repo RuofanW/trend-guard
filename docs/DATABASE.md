@@ -6,8 +6,9 @@ Trend Guard uses **DuckDB** as a local SQL database to store and retrieve histor
 
 - **Database**: DuckDB (in-process SQL OLAP database)
 - **Location**: `data/market.duckdb`
-- **Data Source**: yfinance API (fetches data incrementally)
-- **Update Strategy**: Only fetches missing or outdated data
+- **Data Source**: yfinance API (fetches data incrementally with date range support)
+- **Update Strategy**: Only fetches missing or outdated data (checks all symbols in single query)
+- **Performance**: Uses parallel API calls (20 workers) and batch database operations
 
 ## Initialization
 
@@ -77,6 +78,8 @@ Updates database for multiple symbols:
 - Only fetches data for symbols that need updates
 - Uses yfinance with date range support for efficiency
 - Fetches only missing days (from last_db_date + 10 day buffer to end_date)
+- Parallelizes API calls using ThreadPoolExecutor (20 workers) for faster updates
+- Includes retry logic with exponential backoff for database lock conflicts
 
 ### `db_download_batch(symbols, start, end)`
 

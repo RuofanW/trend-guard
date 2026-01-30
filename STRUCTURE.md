@@ -25,12 +25,12 @@ trend-guard/
 │   │   └── init_db.py           # Database initialization
 │   │
 │   ├── portfolio/               # Portfolio management
-│   │   ├── holdings.py          # Holdings loading (Robinhood/CSV)
+│   │   ├── holdings.py          # Holdings loading (Robinhood/Webull/CSV)
 │   │   └── position_management.py # Position tracking & management
 │   │
 │   └── utils/                   # Utilities
 │       ├── utils.py             # Common utilities (JSON, paths, etc.)
-│       ├── earnings.py          # Earnings detection
+│       ├── earnings.py          # Earnings detection (yfinance-based)
 │       └── universe.py          # Universe symbol loading
 │
 ├── scripts/                      # Executable scripts
@@ -43,6 +43,7 @@ trend-guard/
 │
 ├── docs/                         # Documentation
 │   ├── SCHEDULING.md            # Scheduling setup guide
+│   ├── DATABASE.md              # Database architecture guide
 │   └── TROUBLESHOOTING.md       # Troubleshooting guide
 │
 ├── outputs/                      # Generated outputs (date-stamped)
@@ -59,8 +60,8 @@ trend-guard/
 │
 └── data/                         # Data files (gitignored)
     ├── market.duckdb            # DuckDB database (OHLCV data)
-    ├── state.json               # State persistence (EMA21 timers, core flags)
-    └── robinhood_holdings.csv   # CSV fallback for holdings
+    ├── state.json               # State persistence (EMA21 timers, core flags, profit trim tracking)
+    └── robinhood_holdings.csv   # CSV fallback for holdings (any broker)
 ```
 
 ## Key Directories

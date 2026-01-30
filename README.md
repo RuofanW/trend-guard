@@ -95,8 +95,13 @@ Daily outputs are saved in `outputs/YYYY-MM-DD/`:
 
 **Position Management (3 Buckets):**
 - **CORE**: Long-term holdings, exit on 2 consecutive closes below MA50
-- **TRADE**: Medium-term positions, 3-day EMA21 reclaim timer
+- **TRADE**: Medium-term positions, 3-day EMA21 reclaim timer, profit trim exit logic
 - **SPEC**: Speculative positions, tight ATR-based stops
+
+**Profit Trim Logic (TRADE bucket):**
+- Tracks peak gain in ATR terms (once gain > 1 ATR, locks in eligibility)
+- Exit signal: If peak gain > 1 ATR AND current close < (HH_10 - 2*ATR)
+- Allows exit on pullback even if current gain drops below 1 ATR
 
 **Entry Signals (TRADE bucket):**
 - **Pullback reclaim**: 
@@ -113,5 +118,5 @@ Daily outputs are saved in `outputs/YYYY-MM-DD/`:
   - Close/MA50 ≤ 1.25
   - ATR% ≤ 12%
   - Exclude if open ≥ close in all of the last 3 trading days
-- **Earnings filter**: Excludes symbols with earnings in the next 4 trading days
+- **Earnings filter**: Automatically excludes symbols with earnings in the next 4 trading days (uses yfinance for earnings detection)
 

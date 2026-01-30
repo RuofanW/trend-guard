@@ -94,11 +94,10 @@ launchctl load ~/Library/LaunchAgents/com.trendguard.daily.plist
    **Option C: Use Amphetamine (App Store)**
    - Free app that prevents sleep while plugged in
 
-3. **Environment Variables**: The script loads `.env` file automatically. Make sure your `.env` file has:
-   - `RH_USERNAME`
-   - `RH_PASSWORD`
-   - `TG_BOT_TOKEN` (if using Telegram notifications)
-   - `TG_CHAT_ID` (if using Telegram notifications)
+3. **Environment Variables**: The script loads `.env` file automatically. Make sure your `.env` file has the appropriate credentials based on your broker:
+   - **For Robinhood**: `RH_USERNAME`, `RH_PASSWORD`, `RH_MFA_CODE` (optional)
+   - **For Webull**: `WEBULL_USERNAME`, `WEBULL_PASSWORD`, `WEBULL_DEVICE_ID` (optional), `WEBULL_REGION_ID` (optional, default: 6)
+   - **For Telegram**: `TG_BOT_TOKEN`, `TG_CHAT_ID`
 
 4. **Time Zone**: The job is set to run at 12:15 PM **PST/PDT** (America/Los_Angeles). It automatically adjusts for daylight saving time.
 

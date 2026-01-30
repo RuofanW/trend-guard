@@ -1,6 +1,10 @@
-# Troubleshooting Robinhood Device Approval
+# Troubleshooting Guide
 
-## Issue: Script hangs waiting for device approval, but nothing appears on phone
+## Broker Integration Issues
+
+### Robinhood: Script hangs waiting for device approval
+
+If nothing appears on your phone:
 
 ### Quick Fix: Use CSV Fallback (Temporary)
 
@@ -62,6 +66,50 @@ rh.login(username="your_username", password="your_password")
 ```
 
 If this also hangs, the issue is with robin_stocks/your Robinhood account settings.
+
+### Webull: Login or API Issues
+
+If you're using Webull and experiencing issues:
+
+1. **Check Environment Variables**:
+   ```bash
+   # Required
+   WEBULL_USERNAME=your_username
+   WEBULL_PASSWORD=your_password
+   
+   # Optional
+   WEBULL_DEVICE_ID=your_device_id  # If provided by Webull
+   WEBULL_REGION_ID=6  # Default: 6 (US), other regions may differ
+   ```
+
+2. **Test Webull Login**:
+   ```python
+   from webull import webull
+   wb = webull()
+   wb.login("your_username", "your_password", region_id=6)
+   account_id = wb.get_account_id()
+   positions = wb.get_positions(account_id)
+   print(positions)
+   ```
+
+3. **Switch Back to Robinhood**:
+   If Webull continues to have issues, you can switch back to Robinhood by setting in `config/config.json`:
+   ```json
+   {
+     "broker": "robinhood"
+   }
+   ```
+
+### Switching Between Brokers
+
+To switch brokers, simply update `config/config.json`:
+```json
+{
+  "broker": "robinhood"  // or "webull"
+}
+```
+
+Make sure the corresponding environment variables are set in your `.env` file.
 
 ## Empty CSV Files / "No columns to parse" Error
 
