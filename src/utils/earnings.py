@@ -2,7 +2,7 @@
 Earnings detection using yfinance.
 """
 
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 import pandas as pd
 import yfinance as yf
@@ -12,23 +12,80 @@ def get_earnings_date(symbol: str) -> Optional[str]:
     """
     Get the next earnings date for a symbol using yfinance.
     Returns YYYY-MM-DD string or None if not available.
+    
+    Tries multiple methods:
+    1. ticker.calendar (may be DataFrame or dict)
+    2. ticker.info['earningsDate'] or ticker.info['nextEarningsDate']
     """
     try:
         ticker = yf.Ticker(symbol)
+        
+        # Method 1: Try calendar (can be DataFrame or dict)
         calendar = ticker.calendar
-        if calendar is not None and not calendar.empty:
-            # Get the next earnings date (first row)
-            earnings_date = calendar.iloc[0].get("Earnings Date")
-            if earnings_date is not None:
-                if isinstance(earnings_date, pd.Timestamp):
-                    return earnings_date.strftime("%Y-%m-%d")
-                elif isinstance(earnings_date, str):
-                    # Try to parse if it's a string
-                    try:
-                        dt = pd.to_datetime(earnings_date)
-                        return dt.strftime("%Y-%m-%d")
-                    except:
-                        return None
+        if calendar is not None:
+            if isinstance(calendar, pd.DataFrame) and not calendar.empty:
+                # DataFrame format
+                earnings_date = calendar.iloc[0].get("Earnings Date")
+                if earnings_date is not None:
+                    if isinstance(earnings_date, pd.Timestamp):
+                        return earnings_date.strftime("%Y-%m-%d")
+                    elif isinstance(earnings_date, str):
+                        try:
+                            dt = pd.to_datetime(earnings_date)
+                            return dt.strftime("%Y-%m-%d")
+                        except:
+                            pass
+            elif isinstance(calendar, dict):
+                # Dict format - check for earnings date keys
+                for key in ['Earnings Date', 'earningsDate', 'EarningsDate']:
+                    if key in calendar:
+                        earnings_date = calendar[key]
+                        if earnings_date is not None:
+                            # Handle list/tuple of dates
+                            if isinstance(earnings_date, (list, tuple)) and len(earnings_date) > 0:
+                                earnings_date = earnings_date[0]
+                            # Handle datetime.date objects
+                            if isinstance(earnings_date, date):
+                                return earnings_date.strftime("%Y-%m-%d")
+                            elif isinstance(earnings_date, pd.Timestamp):
+                                return earnings_date.strftime("%Y-%m-%d")
+                            elif isinstance(earnings_date, str):
+                                try:
+                                    dt = pd.to_datetime(earnings_date)
+                                    return dt.strftime("%Y-%m-%d")
+                                except:
+                                    pass
+        
+        # Method 2: Try info dict
+        try:
+            info = ticker.info
+            if isinstance(info, dict):
+                # Check multiple possible keys
+                for key in ['earningsDate', 'nextEarningsDate', 'earnings_date', 'nextEarningsDate']:
+                    if key in info:
+                        earnings_date = info[key]
+                        if earnings_date is not None:
+                            # Can be a list/tuple of timestamps
+                            if isinstance(earnings_date, (list, tuple)) and len(earnings_date) > 0:
+                                earnings_date = earnings_date[0]
+                            if isinstance(earnings_date, pd.Timestamp):
+                                return earnings_date.strftime("%Y-%m-%d")
+                            elif isinstance(earnings_date, (int, float)):
+                                # Unix timestamp
+                                try:
+                                    dt = pd.to_datetime(earnings_date, unit='s')
+                                    return dt.strftime("%Y-%m-%d")
+                                except:
+                                    pass
+                            elif isinstance(earnings_date, str):
+                                try:
+                                    dt = pd.to_datetime(earnings_date)
+                                    return dt.strftime("%Y-%m-%d")
+                                except:
+                                    pass
+        except Exception:
+            pass
+        
         return None
     except Exception:
         # Silently fail - earnings data may not be available for all symbols
