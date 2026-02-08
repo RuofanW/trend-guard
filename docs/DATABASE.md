@@ -8,6 +8,7 @@ Trend Guard uses **DuckDB** as a local SQL database to store and retrieve histor
 - **Location**: `data/market.duckdb`
 - **Data Source**: yfinance API (fetches data incrementally with date range support)
 - **Update Strategy**: Only fetches missing or outdated data (checks all symbols in single query)
+- **Intraday Support**: When running before market close, fetches latest prices via `ticker.info` fallback
 - **Performance**: Uses parallel API calls (20 workers) and batch database operations
 
 ## Initialization
@@ -78,6 +79,7 @@ Updates database for multiple symbols:
 - Only fetches data for symbols that need updates
 - Uses yfinance with date range support for efficiency
 - Fetches only missing days (from last_db_date + 10 day buffer to end_date)
+- **Intraday fallback**: During market hours, if `ticker.history()` doesn't return today's data, automatically fetches current prices from `ticker.info` (regularMarketOpen/High/Low/Price)
 - Parallelizes API calls using ThreadPoolExecutor (20 workers) for faster updates
 - Includes retry logic with exponential backoff for database lock conflicts
 

@@ -47,6 +47,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import pandas as pd
+import numpy as np
 
 # Load environment variables from .env file (if it exists)
 try:
@@ -141,8 +142,8 @@ def main():
     entry_top_n = int(cfg.get("entry_top_n", 15))
     strict_max_close_over_ma50 = float(cfg.get("strict_max_close_over_ma50", 1.25))
     strict_max_atr_pct = float(cfg.get("strict_max_atr_pct", 0.12))
-    dip_min_pct = float(cfg.get("dip_min_pct", 0.06))  # Default 6%
-    dip_max_pct = float(cfg.get("dip_max_pct", 0.12))  # Default 12%
+    dip_min_atr = float(cfg.get("dip_min_atr", 1.5))  # Default 1.5 ATR
+    dip_max_atr = float(cfg.get("dip_max_atr", 3.5))  # Default 3.5 ATR
     dip_lookback_days = int(cfg.get("dip_lookback_days", 12))  # Default 12 days
     dip_rebound_window = int(cfg.get("dip_rebound_window", 5))  # Default 5 days
     min_volume_ratio = float(cfg.get("min_volume_ratio", 1.5))  # Default 1.5x
@@ -249,6 +250,7 @@ def main():
         "rejected_recent_dip": 0,
         "rejected_volume_ratio": 0,
         "rejected_open_ge_close_3d": 0,
+        "rejected_close_range": 0,
         "passed_all_filters": 0,
     }
 
@@ -269,8 +271,8 @@ def main():
             breakout_lookback,
             consolidation_days,
             consolidation_max_range_pct,
-            dip_min_pct,
-            dip_max_pct,
+            dip_min_atr,
+            dip_max_atr,
             dip_lookback_days,
             dip_rebound_window,
         )
@@ -311,6 +313,7 @@ def main():
                             "ma50_slope_10d": f.ma50_slope_10d,
                             "range_pct_15d": f.range_pct_15d,
                             "recent_dip_from_20d_high": f.recent_dip_from_20d_high,
+                            "close_in_top_25pct_range": f.close_in_top_25pct_range,
                             "volume_ratio": f.volume_ratio,
                             "signal_pullback_reclaim": pr,
                             "signal_consolidation_breakout": cb,
@@ -327,9 +330,10 @@ def main():
     print(f"    MA50 slope <= 0: {filter_stats['rejected_ma50_slope']}")
     print(f"    Close/MA50 > {strict_max_close_over_ma50}: {filter_stats['rejected_close_over_ma50']}")
     print(f"    ATR% > {strict_max_atr_pct}: {filter_stats['rejected_atr_pct']}")
-    print(f"    No recent dip ({dip_min_pct*100:.0f}-{dip_max_pct*100:.0f}% from 20d high): {filter_stats['rejected_recent_dip']}")
+    print(f"    No recent dip ({dip_min_atr:.1f}-{dip_max_atr:.1f} ATR from 20d high): {filter_stats['rejected_recent_dip']}")
     print(f"    Volume ratio < {min_volume_ratio}x: {filter_stats['rejected_volume_ratio']}")
     print(f"    Open >= Close in last 3 days: {filter_stats['rejected_open_ge_close_3d']}")
+    print(f"    Close not in top 25% of daily range: {filter_stats['rejected_close_range']}")
     print(f"\n  Passed all filters: {filter_stats['passed_all_filters']}")
 
     entry_df = pd.DataFrame(entry_rows)
@@ -439,7 +443,10 @@ def main():
                     if peak_gain_atr > stored_peak_gain_atr:
                         sym_pt_state["peak_gain_atr"] = peak_gain_atr
                     
-                    # Check exit condition: if peak gain ever exceeded 1 ATR, check pullback
+                    # Check exit conditions for profit trim
+                    exit_reasons = []
+                    
+                    # Condition 1: If peak gain ever exceeded 1 ATR, check pullback
                     # This allows exit even if current gain dropped below 1 ATR due to pullback
                     if peak_gain_atr > 1.0:
                         # Calculate HH_10: highest high over past 10 days
@@ -448,8 +455,15 @@ def main():
                             exit_threshold = hh_10 - 2 * current_atr
                             
                             if current_close < exit_threshold:
-                                # Show both current gain and peak gain for context
-                                notes = f"🔄 PROFIT TRIM EXIT: peak_gain={peak_gain_atr:.1f}ATR, current_gain={gain_in_atr:.1f}ATR, close={current_close:.2f} < HH10-2ATR={exit_threshold:.2f} | " + notes
+                                exit_reasons.append(f"peak_gain={peak_gain_atr:.1f}ATR, current_gain={gain_in_atr:.1f}ATR, close={current_close:.2f} < HH10-2ATR={exit_threshold:.2f}")
+                    
+                    # Condition 2: If close is too extended above MA50 (>25%), trim profit
+                    if np.isfinite(f.close_over_ma50) and f.close_over_ma50 > strict_max_close_over_ma50:
+                        exit_reasons.append(f"close_over_ma50={f.close_over_ma50:.2f} > {strict_max_close_over_ma50} (too extended)")
+                    
+                    # If any exit condition is met, trigger profit trim exit
+                    if exit_reasons:
+                        notes = f"🔄 PROFIT TRIM EXIT: {'; '.join(exit_reasons)} | " + notes
                     
                     # Save updated state
                     state["profit_trim"] = profit_trim_state

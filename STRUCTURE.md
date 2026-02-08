@@ -21,7 +21,7 @@ trend-guard/
 │   │
 │   ├── data/                    # Data layer
 │   │   ├── data_backend.py      # Database operations (DuckDB)
-│   │   ├── provider_yfinance.py  # yfinance data provider (only provider)
+│   │   ├── provider_yfinance.py  # yfinance data provider (with intraday fallback)
 │   │   └── init_db.py           # Database initialization
 │   │
 │   ├── portfolio/               # Portfolio management

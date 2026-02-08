@@ -6,9 +6,10 @@ Automated daily market scanner that analyzes stocks, generates trading signals, 
 
 - **Market Scanning**: Scans NYSE+NASDAQ for entry opportunities
 - **Position Management**: Tracks your holdings with CORE/TRADE/SPEC buckets
-- **Automated Scheduling**: Runs daily at 12:15 PM PST (even when screen is locked)
+- **Automated Scheduling**: Runs daily at 12:15 PM PST before market close (even when screen is locked)
 - **Multi-Broker Support**: Auto-loads holdings from Robinhood or Webull API
 - **Local Database**: Uses DuckDB for fast data storage and retrieval (no repeated API calls)
+- **Intraday Data**: Captures latest prices during market hours with yfinance fallback
 - **HTML Reports**: Generates visual reports with charts
 - **Telegram Notifications**: Sends daily summaries via Telegram
 
@@ -52,7 +53,7 @@ Edit `config/config.json`:
 - Set `broker` to `"robinhood"` or `"webull"` (default: `"robinhood"`)
 - Adjust filters (min_price, min_avg_dollar_vol_20d, etc.)
 - Set `entry_top_n` to limit candidates
-- Configure `dip_min_pct` (default 0.06 = 6%) and `dip_max_pct` (default 0.12 = 12%) for entry dip range
+- Configure `dip_min_atr` (default 1.5) and `dip_max_atr` (default 3.5) for entry dip range in ATR terms
 - Set `read_log_verbose` to `true` for detailed database update logs (default: `false`)
 
 ### 5. Run Manually
@@ -100,7 +101,9 @@ Daily outputs are saved in `outputs/YYYY-MM-DD/`:
 
 **Profit Trim Logic (TRADE bucket):**
 - Tracks peak gain in ATR terms (once gain > 1 ATR, locks in eligibility)
-- Exit signal: If peak gain > 1 ATR AND current close < (HH_10 - 2*ATR)
+- Exit signals (either condition triggers trim):
+  1. Peak gain > 1 ATR AND current close < (HH_10 - 2*ATR) - pullback from highs
+  2. Close/MA50 > 1.25 - too extended above MA50
 - Allows exit on pullback even if current gain drops below 1 ATR
 
 **Entry Signals (TRADE bucket):**
@@ -108,15 +111,20 @@ Daily outputs are saved in `outputs/YYYY-MM-DD/`:
   - Price crosses above EMA21 while above MA50, OR
   - Close < EMA21 on day before yesterday AND cross up EMA21 today
 - **Consolidation breakout**: Breaks 20-day high after tight consolidation (max 12% range over 15 days)
-- **Recent dip requirement**: 
-  - Stock must have dipped by 6-12% from its 20-day high
+- **ATR-based dip requirement** (ensures "normal" pullbacks, avoids broken charts):
+  - Stock must have dipped by 1.5-4.0 ATR from its 20-day high (configurable via `dip_min_atr`, `dip_max_atr`)
   - Dip must have occurred within the last 12 trading days (from high to low)
   - Rebound (entry trigger) must happen within 5 days after the low
-- **Volume confirmation**: Entry day volume ≥ 1.5x the 20-day average volume
+- **Volume confirmation**: Entry day volume ≥ 1.25x the 20-day average volume
 - **Strict filters**: 
   - Positive MA50 slope (10-day)
   - Close/MA50 ≤ 1.25
   - ATR% ≤ 12%
   - Exclude if open ≥ close in all of the last 3 trading days
+  - **Close in top 25% of daily range** (momentum filter: close near the high)
 - **Earnings filter**: Automatically excludes symbols with earnings in the next 4 trading days (uses yfinance for earnings detection)
+
+**Data Fetching:**
+- Runs before market close to capture latest intraday prices
+- Uses yfinance with fallback to `ticker.info` for reliable intraday data during market hours
 

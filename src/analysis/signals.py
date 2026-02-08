@@ -44,7 +44,7 @@ def passes_strict_trade_filters(f: FeatureRow, max_close_over_ma50: float, max_a
     Check if feature row passes all strict trade filters.
     Optionally updates filter_stats dict to track which filters reject candidates.
     """
-    if not np.isfinite(f.ma50_slope_10d) or f.ma50_slope_10d <= 0:
+    if not np.isfinite(f.ma50_slope_10d) or f.ma50_slope_10d <= 0.2:
         if filter_stats is not None:
             filter_stats["rejected_ma50_slope"] = filter_stats.get("rejected_ma50_slope", 0) + 1
         return False
@@ -70,6 +70,11 @@ def passes_strict_trade_filters(f: FeatureRow, max_close_over_ma50: float, max_a
     if f.open_ge_close_last_3_days:
         if filter_stats is not None:
             filter_stats["rejected_open_ge_close_3d"] = filter_stats.get("rejected_open_ge_close_3d", 0) + 1
+        return False
+    # Require close to be in top 25% of daily range (momentum filter)
+    if not f.close_in_top_25pct_range:
+        if filter_stats is not None:
+            filter_stats["rejected_close_range"] = filter_stats.get("rejected_close_range", 0) + 1
         return False
     if filter_stats is not None:
         filter_stats["passed_all_filters"] = filter_stats.get("passed_all_filters", 0) + 1

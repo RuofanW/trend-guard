@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from src.analysis.indicators import ema, atr, compute_pullback_depth_after_high
+from src.analysis.indicators import ema, atr, compute_pullback_depth_atr
 
 
 @dataclass
@@ -40,6 +40,7 @@ class FeatureRow:
     volume_ratio: float
     open_ge_close_last_3_days: bool  # True if open >= close in all of last 3 trading days
     close_below_ema21_2d_ago: bool  # True if close < EMA21 on day before yesterday (2 days ago)
+    close_in_top_25pct_range: bool  # True if close is in top 25% of daily range (momentum filter)
 
 
 def compute_stage1_prescreen(df: pd.DataFrame) -> Optional[Tuple[str, float, float]]:
@@ -68,8 +69,8 @@ def compute_features(
     breakout_lookback: int,
     consolidation_days: int,
     consolidation_max_range_pct: float,
-    dip_min_pct: float = 0.06,
-    dip_max_pct: float = 0.12,
+    dip_min_atr: float = 1.5,
+    dip_max_atr: float = 3.5,
     dip_lookback_days: int = 12,
     dip_rebound_window: int = 5,
 ) -> Optional[FeatureRow]:
@@ -123,20 +124,29 @@ def compute_features(
     atr_pct = float(atr14v / close) if close > 0 and np.isfinite(atr14v) else float("nan")
     close_over_ma50 = float(close / ma50) if ma50 > 0 and np.isfinite(ma50) else float("nan")
     
-    # Check for recent dip from high using pullback depth computation
+    # Check if close is in top 25% of daily range (momentum filter)
+    # Formula: (Close - Low) / (High - Low) >= 0.75
+    daily_range = high - low
+    close_in_top_25pct_range = False
+    if daily_range > 0 and np.isfinite(close) and np.isfinite(high) and np.isfinite(low):
+        close_position_in_range = (close - low) / daily_range
+        close_in_top_25pct_range = close_position_in_range >= 0.75
+    
+    # Check for recent dip from high using ATR-based pullback depth computation
+    # This ensures we only buy "normal" pullbacks and avoid "broken" charts
     recent_dip_from_20d_high = False
     if len(df) >= dip_lookback_days + dip_rebound_window:
-        # Compute pullback depth for each day using the lookback window
-        pullback_depths = compute_pullback_depth_after_high(df["Close"], df["High"], df["Low"], dip_lookback_days)
+        # Compute pullback depth in ATR terms for each day using the lookback window
+        pullback_depths_atr = compute_pullback_depth_atr(df["High"], df["Low"], df["ATR14"], dip_lookback_days)
         
         # Check the last dip_rebound_window days (excluding today) for qualifying dips
         # A qualifying dip means:
-        # 1. Pullback depth is between dip_min_pct and dip_max_pct
+        # 1. Pullback depth is between dip_min_atr and dip_max_atr (in ATR terms)
         # 2. The dip occurred within dip_rebound_window days (so entry trigger is timely)
-        recent_window = pullback_depths.iloc[-(dip_rebound_window + 1):]  # Last N days
+        recent_window = pullback_depths_atr.iloc[-(dip_rebound_window + 1):]  # Last N days
         
         for depth_date, depth_val in recent_window.items():
-            if np.isfinite(depth_val) and dip_min_pct <= depth_val <= dip_max_pct:
+            if np.isfinite(depth_val) and dip_min_atr <= depth_val <= dip_max_atr:
                 # Found a qualifying dip depth - check timing
                 depth_idx = df.index.get_loc(depth_date)
                 days_since_dip = len(df) - 1 - depth_idx
@@ -194,5 +204,6 @@ def compute_features(
         volume_ratio=volume_ratio,
         open_ge_close_last_3_days=open_ge_close_last_3_days,
         close_below_ema21_2d_ago=close_below_ema21_2d_ago,
+        close_in_top_25pct_range=close_in_top_25pct_range,
     )
 
