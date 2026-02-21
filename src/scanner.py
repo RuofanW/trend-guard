@@ -72,6 +72,7 @@ from src.analysis.signals import prescreen_pass, trade_entry_signals, passes_str
 from src.analysis.indicators import atr
 from src.portfolio.position_management import manage_position
 from src.utils.earnings import get_earnings_date, has_earnings_soon
+from src.ai.sentinel import NewsSentinel
 
 
 def download_daily_batch(
@@ -147,6 +148,10 @@ def main():
     dip_lookback_days = int(cfg.get("dip_lookback_days", 12))  # Default 12 days
     dip_rebound_window = int(cfg.get("dip_rebound_window", 5))  # Default 5 days
     min_volume_ratio = float(cfg.get("min_volume_ratio", 1.5))  # Default 1.5x
+    
+    # AI Sentinel settings
+    enable_ai_sentinel = bool(cfg.get("enable_ai_sentinel", False))  # Disabled by default
+    ai_risk_threshold = int(cfg.get("ai_risk_threshold", 7))  # Risk >= 7 triggers rejection
 
     # state
     state = load_json(str(STATE_FILE), default={"reclaim_watch": {}, "prev_flags": {}})
@@ -352,6 +357,29 @@ def main():
             excluded_count = len(entry_df) - len(entry_df_filtered)
             print(f"  Excluded {excluded_count} entry candidate(s) due to earnings in next 4 trading days")
             entry_df = entry_df_filtered
+        
+        # AI Sentinel: Filter candidates based on news sentiment (if enabled)
+        if enable_ai_sentinel and not entry_df.empty:
+            sentinel = NewsSentinel(risk_threshold=ai_risk_threshold)
+            if sentinel.is_available():
+                candidate_tickers = entry_df["symbol"].tolist()
+                accepted_tickers, rejected_list, all_results = sentinel.filter_candidates(candidate_tickers)
+                
+                # Filter to only accepted tickers
+                entry_df = entry_df[entry_df["symbol"].isin(accepted_tickers)].copy()
+                
+                # Add AI columns using cached results (no duplicate API calls)
+                entry_df["ai_risk"] = entry_df["symbol"].apply(
+                    lambda s: all_results[s].risk_score if s in all_results else 0
+                )
+                entry_df["ai_reason"] = entry_df["symbol"].apply(
+                    lambda s: all_results[s].reason if s in all_results else "N/A"
+                )
+                
+                if rejected_list:
+                    print(f"  AI Sentinel rejected {len(rejected_list)} candidate(s) due to high news risk")
+            else:
+                print("  AI Sentinel: Not available (missing GEMINI_API_KEY), skipping news analysis")
     
     print(f"\n  Final entry candidates: {len(entry_df)} (from {total_ranked} ranked, top {entry_top_n} selected)")
 
