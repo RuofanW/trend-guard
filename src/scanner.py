@@ -163,6 +163,18 @@ def main():
     held_syms = load_holdings(cfg, run_date)
     print(f"Held symbols: {len(held_syms)}")
 
+    # Clean up stale state entries for symbols no longer held
+    active_syms = set(held_syms) | core_set | spec_set
+    stale_reclaim = [s for s in state.get("reclaim_watch", {}) if s not in active_syms]
+    stale_flags   = [s for s in state.get("prev_flags", {}) if s not in active_syms]
+    stale_trim    = [s for s in state.get("profit_trim", {}) if s not in active_syms]
+    for s in stale_reclaim: state["reclaim_watch"].pop(s)
+    for s in stale_flags:   state["prev_flags"].pop(s)
+    for s in stale_trim:    state["profit_trim"].pop(s)
+    if stale_reclaim or stale_flags or stale_trim:
+        print(f"  Purged stale state: {len(stale_reclaim)} reclaim_watch, "
+              f"{len(stale_flags)} prev_flags, {len(stale_trim)} profit_trim entries")
+
     # universe
     if not scan_universe:
         print("Universe scan disabled (scan_universe=false). Managing holdings only.")
