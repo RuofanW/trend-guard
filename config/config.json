@@ -36,5 +36,8 @@
   
     "holdings_csv": "robinhood_holdings.csv",
     "read_log_verbose": false,
-    "broker": "robinhood"
+    "broker": "robinhood",
+  
+    "enable_ai_sentinel": true,
+    "ai_risk_threshold": 7
 }

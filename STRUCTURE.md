@@ -28,10 +28,13 @@ trend-guard/
 │   │   ├── holdings.py          # Holdings loading (Robinhood/Webull/CSV)
 │   │   └── position_management.py # Position tracking & management
 │   │
-│   └── utils/                   # Utilities
-│       ├── utils.py             # Common utilities (JSON, paths, etc.)
-│       ├── earnings.py          # Earnings detection (yfinance-based)
-│       └── universe.py          # Universe symbol loading
+│   ├── utils/                   # Utilities
+│   │   ├── utils.py             # Common utilities (JSON, paths, etc.)
+│   │   ├── earnings.py          # Earnings detection (yfinance-based)
+│   │   └── universe.py          # Universe symbol loading
+│   │
+│   └── ai/                      # AI-powered analysis
+│       └── sentinel.py          # News sentiment analysis (Gemini)
 │
 ├── scripts/                      # Executable scripts
 │   ├── trendguard_daily.sh      # Daily pipeline runner

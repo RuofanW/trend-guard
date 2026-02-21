@@ -6,6 +6,7 @@ Automated daily market scanner that analyzes stocks, generates trading signals, 
 
 - **Market Scanning**: Scans NYSE+NASDAQ for entry opportunities
 - **Position Management**: Tracks your holdings with CORE/TRADE/SPEC buckets
+- **AI News Sentinel**: Filters candidates using AI-powered news sentiment analysis (Gemini)
 - **Automated Scheduling**: Runs daily at 12:15 PM PST before market close (even when screen is locked)
 - **Multi-Broker Support**: Auto-loads holdings from Robinhood or Webull API
 - **Local Database**: Uses DuckDB for fast data storage and retrieval (no repeated API calls)
@@ -44,6 +45,8 @@ cp .env.example .env
 #   - WEBULL_DEVICE_ID (optional), WEBULL_REGION_ID (default: 6 for US)
 # For Telegram:
 #   - TG_BOT_TOKEN, TG_CHAT_ID
+# For AI Sentinel (optional):
+#   - GEMINI_API_KEY (Google Gemini API key)
 ```
 
 ### 4. Configure Settings
@@ -123,6 +126,11 @@ Daily outputs are saved in `outputs/YYYY-MM-DD/`:
   - Exclude if open ≥ close in all of the last 3 trading days
   - **Close in top 25% of daily range** (momentum filter: close near the high)
 - **Earnings filter**: Automatically excludes symbols with earnings in the next 4 trading days (uses yfinance for earnings detection)
+- **AI News Sentinel** (optional): Scans last 48-72 hours of news for red flags:
+  - Detects: Secondary offerings, lawsuits, FDA rejections, earnings misses, executive scandals
+  - Assigns risk score 0-10; rejects candidates with risk >= threshold (default: 7)
+  - Uses Google Gemini API (fast, cheap) with yfinance/GNews for headline fetching
+  - Enable with `enable_ai_sentinel: true` in config and set `GEMINI_API_KEY` env var
 
 **Data Fetching:**
 - Runs before market close to capture latest intraday prices
