@@ -42,6 +42,10 @@ class FeatureRow:
     close_below_ema21_2d_ago: bool  # True if close < EMA21 on day before yesterday (2 days ago)
     close_in_top_25pct_range: bool  # True if close is in top 25% of daily range (momentum filter)
 
+    # Relative Strength vs SPY — populated post-parallel in scanner.py
+    rs_raw: float = 1.0        # (stock 126-day return) / (SPY 126-day return)
+    rs_percentile: float = 50.0  # percentile rank vs all Stage 2 candidates (0–100)
+
 
 def compute_stage1_prescreen(df: pd.DataFrame) -> Optional[Tuple[str, float, float]]:
     """

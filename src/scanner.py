@@ -237,10 +237,14 @@ def main():
         if s not in stage1_pass:
             stage1_pass.append(s)
 
-    # Ensure CORE symbols are always included in Stage 2    
+    # Ensure CORE symbols are always included in Stage 2
     for s in core_set:
         if s not in stage1_pass:
             stage1_pass.append(s)
+
+    # Ensure SPY is always fetched for Relative Strength computation
+    if "SPY" not in stage1_pass:
+        stage1_pass.append("SPY")
 
     # Update database for Stage 2 symbols
     # Use same LA timezone as start1 and end_date for consistency
@@ -309,6 +313,48 @@ def main():
             filter_stats["evaluated"] += 1
             features_map[sym] = f
 
+    # Compute Relative Strength vs SPY (126-day / ~6-month performance ratio)
+    # Uses the same bars dict already loaded — no extra DB or API calls.
+    RS_LOOKBACK = 126  # ~6 months of trading days
+    spy_return_ratio = None
+    if "SPY" in bars:
+        spy_df = bars["SPY"]
+        if len(spy_df) >= RS_LOOKBACK + 1:
+            spy_now  = float(spy_df["Close"].iloc[-1])
+            spy_then = float(spy_df["Close"].iloc[-(RS_LOOKBACK + 1)])
+            if spy_then > 0 and np.isfinite(spy_now) and np.isfinite(spy_then):
+                spy_return_ratio = spy_now / spy_then
+
+    if spy_return_ratio and spy_return_ratio > 0:
+        # Compute raw RS ratio for every symbol in features_map
+        for sym, f in features_map.items():
+            if sym == "SPY":
+                continue
+            df = bars.get(sym)
+            if df is None or len(df) < RS_LOOKBACK + 1:
+                continue
+            close_now  = float(df["Close"].iloc[-1])
+            close_then = float(df["Close"].iloc[-(RS_LOOKBACK + 1)])
+            if close_then > 0 and np.isfinite(close_now) and np.isfinite(close_then):
+                f.rs_raw = (close_now / close_then) / spy_return_ratio
+
+        # Percentile-rank rs_raw across all Stage 2 candidates
+        rs_vals_sorted = np.sort(
+            np.array([f.rs_raw for f in features_map.values()
+                      if np.isfinite(f.rs_raw) and f.rs_raw > 0])
+        )
+        n = len(rs_vals_sorted)
+        if n > 0:
+            for f in features_map.values():
+                if np.isfinite(f.rs_raw) and f.rs_raw > 0:
+                    rank = int(np.searchsorted(rs_vals_sorted, f.rs_raw, side="right"))
+                    f.rs_percentile = 100.0 * rank / n
+        spy_pct_6m = (spy_return_ratio - 1.0) * 100
+        print(f"  Relative Strength vs SPY computed for {n} symbols "
+              f"(SPY 126d return: {spy_pct_6m:+.1f}%)")
+    else:
+        print("  WARNING: SPY data unavailable, skipping Relative Strength computation")
+
     # Process features sequentially (filtering logic)
     for sym, f in features_map.items():
         if prescreen_pass(f.close, f.avg_dollar_vol_20d, min_price, min_avg_dvol):
@@ -335,6 +381,7 @@ def main():
                             "signal_pullback_reclaim": pr,
                             "signal_consolidation_breakout": cb,
                             "reasons": why,
+                            "rs_percentile": round(f.rs_percentile, 1),
                             "score": entry_score(f),
                         })
 
@@ -538,7 +585,7 @@ def main():
         print("\n=== Top Entry Candidates ===")
         print(
             entry_df[
-                ["symbol", "asof", "close", "signal_pullback_reclaim", "signal_consolidation_breakout", "reasons", "score"]
+                ["symbol", "asof", "close", "signal_pullback_reclaim", "signal_consolidation_breakout", "reasons", "rs_percentile", "score"]
             ].to_string(index=False)
         )
     else:

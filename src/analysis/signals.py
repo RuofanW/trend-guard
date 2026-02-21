@@ -99,6 +99,7 @@ def entry_score(f: FeatureRow) -> float:
     tightness = -f.range_pct_15d
     extension = -abs(f.close_over_ma50 - 1.10)
     slope = f.ma50_slope_10d / max(f.ma50, 1e-6)
+    rs = f.rs_percentile  # 0–100; defaults to 50 if SPY data unavailable
 
-    return float(2.0 * liquidity + 200.0 * tightness + 10.0 * extension + 50.0 * slope)
+    return float(2.0 * liquidity + 200.0 * tightness + 10.0 * extension + 50.0 * slope + 0.2 * rs)
 
