@@ -265,39 +265,44 @@ class BackfillEngine:
         Use a single DuckDB aggregation query to get the top symbols by 20-day
         dollar volume on date_str. Much faster than fetching full OHLCV for all
         symbols just to do a prescreen.
+
+        Two date windows:
+          s1_start   — how far back we load rows (STAGE1_HISTORY calendar days),
+                       large enough to compute LAST(close) reliably.
+          dvol_start — the true 20-trading-day window (≈30 calendar days) used
+                       for the AVG(close * volume) filter and HAVING clause.
         """
-        s1_start = (
-            pd.Timestamp(date_str) - timedelta(days=STAGE1_HISTORY)
-        ).strftime("%Y-%m-%d")
+        date_ts   = pd.Timestamp(date_str)
+        s1_start  = (date_ts - timedelta(days=STAGE1_HISTORY)).strftime("%Y-%m-%d")
+        dvol_start = (date_ts - timedelta(days=30)).strftime("%Y-%m-%d")  # ≈ 20 trading days
 
         con = duckdb.connect(str(DB_PATH), config={"access_mode": "READ_ONLY"})
         try:
             syms_df = pd.DataFrame({"symbol": [s.upper() for s in universe]})
             con.register("universe_syms", syms_df)
 
-            result = con.execute("""
+            # All value placeholders use ? — no .format() string interpolation.
+            # LIMIT does not support ? in DuckDB, so MAX_STAGE2_SYMBOLS is
+            # embedded as an integer literal (it is a module-level constant,
+            # not user-supplied input, so there is no injection risk).
+            result = con.execute(f"""
                 SELECT
                     o.symbol,
-                    LAST(o.close ORDER BY o.date)                      AS last_close,
+                    LAST(o.close ORDER BY o.date)              AS last_close,
                     AVG(o.close * o.volume)
-                        FILTER (WHERE o.date > DATE '{s1_start}')      AS avg_dvol_20d
+                        FILTER (WHERE o.date > ?)              AS avg_dvol_20d
                 FROM universe_syms u
                 INNER JOIN ohlcv_daily o ON u.symbol = o.symbol
-                WHERE o.date <= '{date_str}'
-                  AND o.date >  '{s1_start}'
+                WHERE o.date <= ?
+                  AND o.date >  ?
                 GROUP BY o.symbol
-                HAVING LAST(o.close ORDER BY o.date) >= {min_price}
+                HAVING LAST(o.close ORDER BY o.date) >= ?
                    AND AVG(o.close * o.volume)
-                        FILTER (WHERE o.date > DATE '{s1_start}') >= {min_dvol}
+                        FILTER (WHERE o.date > ?) >= ?
                 ORDER BY avg_dvol_20d DESC
-                LIMIT {cap}
-            """.format(
-                s1_start  = s1_start,
-                date_str  = date_str,
-                min_price = RELAXED["min_price"],
-                min_dvol  = RELAXED["min_avg_dvol"],
-                cap       = MAX_STAGE2_SYMBOLS,
-            )).fetchall()
+                LIMIT {MAX_STAGE2_SYMBOLS}
+            """, [dvol_start, date_str, s1_start,
+                  RELAXED["min_price"], dvol_start, RELAXED["min_avg_dvol"]]).fetchall()
 
             con.unregister("universe_syms")
         finally:
@@ -456,14 +461,13 @@ class BackfillEngine:
 
     def _get_trading_dates(self, start_date: str, end_date: str) -> List[pd.Timestamp]:
         """
-        Return all dates that exist in ohlcv_daily within [start_date, end_date]
-        AND have at least STAGE2_HISTORY days of prior data available (so feature
-        computation has enough history).
-        """
-        min_history_start = (
-            pd.Timestamp(start_date) - timedelta(days=STAGE2_HISTORY + 60)
-        ).strftime("%Y-%m-%d")
+        Return all trading dates that exist in ohlcv_daily within [start_date, end_date].
 
+        No history-depth filtering is applied here. Dates that fall too early
+        in the DB (insufficient history for feature computation) will naturally
+        produce zero signals — compute_features() returns None when it has fewer
+        rows than its minimum requirement, so _process_date() returns 0 for them.
+        """
         con = duckdb.connect(str(DB_PATH), config={"access_mode": "READ_ONLY"})
         try:
             rows = con.execute("""
@@ -479,16 +483,15 @@ class BackfillEngine:
         """Return set of date strings already in signal_outcomes for this variant."""
         con = duckdb.connect(str(DB_PATH), config={"access_mode": "READ_ONLY"})
         try:
-            # Table may not exist yet
-            try:
-                rows = con.execute("""
-                    SELECT DISTINCT CAST(scan_date AS VARCHAR)
-                    FROM signal_outcomes
-                    WHERE strategy_variant = ?
-                """, [self.strategy_variant]).fetchall()
-                return {r[0] for r in rows}
-            except Exception:
-                return set()
+            rows = con.execute("""
+                SELECT DISTINCT CAST(scan_date AS VARCHAR)
+                FROM signal_outcomes
+                WHERE strategy_variant = ?
+            """, [self.strategy_variant]).fetchall()
+            return {r[0] for r in rows}
+        except duckdb.CatalogException:
+            # Table does not exist yet — treat as no dates processed.
+            return set()
         finally:
             con.close()
 
