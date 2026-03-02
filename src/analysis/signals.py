@@ -20,14 +20,15 @@ def trade_entry_signals(f: FeatureRow) -> Tuple[bool, bool, str]:
     """
     if f.below_ma50:
         return False, False, "below_MA50"
-    # Pullback reclaim: either cross_up_ema21 today, OR (close < EMA21 on day before yesterday AND cross_up_ema21 today)
-    pullback_reclaim = f.cross_up_ema21 or (f.close_below_ema21_2d_ago and f.cross_up_ema21)
+    # Pullback reclaim: cross up today, OR (close was below EMA21 two days ago and we're above EMA21 now)
+    above_ema21_now = np.isfinite(f.close) and np.isfinite(f.ema21) and f.close > f.ema21
+    pullback_reclaim = f.cross_up_ema21 or (f.close_below_ema21_2d_ago and above_ema21_now)
     consolidation_breakout = bool(f.consolidation_ok and f.breakout20)
 
     reasons = []
     if pullback_reclaim:
-        if f.close_below_ema21_2d_ago and f.cross_up_ema21:
-            reasons.append("pullback_reclaim(close<EMA21_2d_ago+cross_up_today)")
+        if f.close_below_ema21_2d_ago and above_ema21_now:
+            reasons.append("pullback_reclaim(close<EMA21_2d_ago+above_EMA21_today)")
         elif f.cross_up_ema21:
             reasons.append("pullback_reclaim(EMA21_cross_up)")
     if consolidation_breakout:

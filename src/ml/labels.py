@@ -121,9 +121,13 @@ def compute_labels(
             if np.isfinite(c):
                 result[key] = c / entry_price - 1.0
 
-    # ── Max excursions over full hold window ──────────────────────────────
-    highs = fwd["High"].dropna()
-    lows  = fwd["Low"].dropna()
+    # ── Max excursions over the held period only (truncated at exit) ─────
+    # For early exits (stop/target), only bars up to exit_day are included.
+    # For timeouts (exit_day is None), the full max_hold_days window is used.
+    exit_day = result["exit_day"]
+    excursion_window = fwd.iloc[:exit_day] if exit_day is not None else fwd
+    highs = excursion_window["High"].dropna()
+    lows  = excursion_window["Low"].dropna()
     if len(highs) > 0:
         result["mfe_20d"] = float(highs.max()) / entry_price - 1.0
     if len(lows) > 0:

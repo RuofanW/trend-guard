@@ -151,8 +151,11 @@ def compute_features(
         
         for depth_date, depth_val in recent_window.items():
             if np.isfinite(depth_val) and dip_min_atr <= depth_val <= dip_max_atr:
-                # Found a qualifying dip depth - check timing
-                depth_idx = df.index.get_loc(depth_date)
+                # Found a qualifying dip depth - check timing.
+                # get_loc can return a slice when pandas/DuckDB date dtypes don't
+                # align perfectly (e.g. datetime64[s] vs datetime64[ns]); take .start.
+                loc = df.index.get_loc(depth_date)
+                depth_idx = loc.start if isinstance(loc, slice) else int(loc)
                 days_since_dip = len(df) - 1 - depth_idx
                 # The dip depth is computed for day depth_date, and today is within rebound window
                 if 0 <= days_since_dip <= dip_rebound_window:

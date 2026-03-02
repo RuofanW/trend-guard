@@ -13,17 +13,22 @@ The passed_strict_filters column records what production would have done.
 Usage examples
 ──────────────
   # Backfill all available history with default settings
+  # --end defaults to today − int(max_hold*7/5)+10 days (38d for default --max-hold 20)
   uv run python scripts/backfill_signals.py --start 2022-01-01
 
-  # Custom label parameters
+  # Custom label parameters and explicit date window
   uv run python scripts/backfill_signals.py \\
-      --start 2020-01-01 --end 2024-12-31 \\
+      --start 2020-01-01 --end 2024-06-01 \\
       --profit-target-atr 2.0 --stop-atr 1.0 --max-hold 15
 
   # Tag as a named strategy variant (for grid-sweep experiments)
   uv run python scripts/backfill_signals.py \\
       --start 2022-01-01 --variant tight_vol \\
       --profit-target-atr 1.5 --stop-atr 1.0
+
+  # Re-examine already-processed dates to recover signals previously skipped
+  # due to missing forward data (e.g. after running with --end too close to today)
+  uv run python scripts/backfill_signals.py --start 2022-01-01 --force
 
   # Print summary of what's in the table and exit
   uv run python scripts/backfill_signals.py --stats
@@ -36,7 +41,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date, datetime
+from datetime import date, timedelta
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -45,6 +50,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.utils.utils import load_json, CONFIG_FILE
 from src.ml.schema import init_outcomes_table, outcomes_summary
 from src.ml.backfill import BackfillEngine
+
+def _end_offset_days(max_hold_days: int) -> int:
+    """Calendar days needed so max_hold_days trading days exist after a scan date.
+    Mirrors the formula in BackfillEngine._process_date: int(max_hold_days * 7/5) + 10.
+    """
+    return int(max_hold_days * 7 / 5) + 10
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,9 +72,13 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--end",
-        default=date.today().strftime("%Y-%m-%d"),
+        default=None,
         metavar="YYYY-MM-DD",
-        help="Last scan date to backfill (default: today)",
+        help=(
+            "Last scan date to backfill "
+            "(default: today − int(max_hold*7/5)+10 days, ensuring a complete forward window; "
+            "38 days for the default --max-hold 20)"
+        ),
     )
     p.add_argument(
         "--variant",
@@ -98,6 +113,16 @@ def parse_args() -> argparse.Namespace:
         default=0,
         metavar="N",
         help="Cap relaxed candidates per day (0 = unlimited, default: 0)",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Reprocess dates even if they already have rows in signal_outcomes. "
+            "Safe to use: existing rows are never overwritten (ON CONFLICT DO NOTHING), "
+            "but previously-skipped signals (e.g. from running with --end too close to today) "
+            "will be inserted."
+        ),
     )
     p.add_argument(
         "--stats",
@@ -166,10 +191,18 @@ def main() -> None:
         max_candidates_per_day   = args.max_candidates,
     )
 
+    # Derive --end default from --max-hold so the forward window is always complete
+    if args.end is None:
+        offset = _end_offset_days(args.max_hold)
+        args.end = (date.today() - timedelta(days=offset)).strftime("%Y-%m-%d")
+
     print(f"Label params: profit_target={args.profit_target_atr}×ATR  "
           f"stop={args.stop_atr}×ATR  max_hold={args.max_hold}d")
+    print(f"Date window:  {args.start} → {args.end}")
+    if args.force:
+        print("--force: previously-processed dates will be re-examined for missing signals")
 
-    engine.run(start_date=args.start, end_date=args.end)
+    engine.run(start_date=args.start, end_date=args.end, force=args.force)
 
     # Print updated summary after run
     print()

@@ -43,14 +43,14 @@ from src.ml.labels import compute_labels
 RELAXED = dict(
     min_price            = 5.0,
     min_avg_dvol         = 5_000_000,
-    max_close_over_ma50  = 1.40,
+    max_close_over_ma50  = 1.35,
     max_atr_pct          = 0.20,
-    min_volume_ratio     = 0.70,
+    min_volume_ratio     = 1.15,
     min_ma50_slope       = 0.0,
-    dip_min_atr          = 0.5,
+    dip_min_atr          = 1.0,
     dip_max_atr          = 6.0,
-    dip_lookback_days    = 15,
-    dip_rebound_window   = 7,
+    dip_lookback_days    = 12,
+    dip_rebound_window   = 5,
     # No open_ge_close_last_3_days filter
     # No close_in_top_25pct_range filter
 )
@@ -70,7 +70,8 @@ STRICT = dict(
 RS_LOOKBACK        = 126   # ~6 months of trading days
 STAGE1_HISTORY     = 100   # calendar days for Stage 1 dollar-volume prescreen
 STAGE2_HISTORY     = 380   # calendar days for Stage 2 feature computation
-FORWARD_BUFFER     = 35    # calendar days fetched for label computation
+# Forward window for labels: derived from max_hold_days so --max-hold > 20 gets enough bars
+# (trading_days ≈ calendar * 5/7; add buffer for holidays)
 MAX_STAGE2_SYMBOLS = 800   # cap on Stage 2 candidates
 
 
@@ -118,16 +119,23 @@ class BackfillEngine:
 
     # ── Public entry point ────────────────────────────────────────────────────
 
-    def run(self, start_date: str, end_date: str) -> None:
+    def run(self, start_date: str, end_date: str, force: bool = False) -> None:
         """
         Backfill signal_outcomes for every trading date in [start_date, end_date].
 
         Dates that already have rows in signal_outcomes for this strategy_variant
         are skipped automatically (idempotent / resume-safe).
+
+        Args:
+            force: If True, bypass the already-processed check so every date in
+                   the range is re-examined. Existing rows are never overwritten
+                   (INSERT ... ON CONFLICT DO NOTHING), but signals that were
+                   previously skipped due to insufficient forward data will be
+                   inserted if the data is now available.
         """
         universe   = self._load_universe()
         dates      = self._get_trading_dates(start_date, end_date)
-        done_dates = self._already_processed_dates()
+        done_dates = set() if force else self._already_processed_dates()
 
         pending = [d for d in dates if d.strftime("%Y-%m-%d") not in done_dates]
         print(
@@ -199,7 +207,9 @@ class BackfillEngine:
         }
 
         # ── Forward data for label computation ────────────────────────────
-        fwd_end = (date + timedelta(days=FORWARD_BUFFER)).strftime("%Y-%m-%d")
+        # Fetch enough calendar days to cover max_hold_days trading days (~5/7 ratio + buffer)
+        forward_calendar_days = int(self.max_hold_days * 7 / 5) + 10
+        fwd_end = (date + timedelta(days=forward_calendar_days)).strftime("%Y-%m-%d")
         fwd_bars = db_download_batch(list(candidates.keys()), start=date_str, end=fwd_end)
 
         # ── Build rows ────────────────────────────────────────────────────
@@ -524,10 +534,12 @@ class BackfillEngine:
 
         con = duckdb.connect(str(DB_PATH))
         try:
-            con.register("insert_df", df)
-            con.execute("""
-                INSERT INTO signal_outcomes
-                SELECT * FROM insert_df
+            # Register without index so DuckDB doesn't get an extra column (pandas index)
+            con.register("insert_df", df.reset_index(drop=True))
+            cols = ", ".join(expected_cols)
+            con.execute(f"""
+                INSERT INTO signal_outcomes ({cols})
+                SELECT {cols} FROM insert_df
                 ON CONFLICT (scan_date, symbol, strategy_variant) DO NOTHING
             """)
             con.unregister("insert_df")
