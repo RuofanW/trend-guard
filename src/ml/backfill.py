@@ -127,11 +127,12 @@ class BackfillEngine:
         are skipped automatically (idempotent / resume-safe).
 
         Args:
-            force: If True, bypass the already-processed check so every date in
-                   the range is re-examined. Existing rows are never overwritten
-                   (INSERT ... ON CONFLICT DO NOTHING), but signals that were
-                   previously skipped due to insufficient forward data will be
-                   inserted if the data is now available.
+            force: If True, bypass the already-processed check AND overwrite existing
+                   rows with freshly recomputed values (ON CONFLICT DO UPDATE SET).
+                   Use this when signal logic or label computation has changed and
+                   you need to refresh all stored rows.
+                   Without force, new dates are inserted but existing rows are never
+                   touched (ON CONFLICT DO NOTHING).
         """
         universe   = self._load_universe()
         dates      = self._get_trading_dates(start_date, end_date)
@@ -147,7 +148,7 @@ class BackfillEngine:
 
         total_signals = 0
         for idx, date in enumerate(pending, 1):
-            n = self._process_date(date, universe)
+            n = self._process_date(date, universe, overwrite=force)
             total_signals += n
             if idx % 10 == 0 or idx == len(pending):
                 print(
@@ -159,7 +160,7 @@ class BackfillEngine:
 
     # ── Per-date processing ───────────────────────────────────────────────────
 
-    def _process_date(self, date: pd.Timestamp, universe: List[str]) -> int:
+    def _process_date(self, date: pd.Timestamp, universe: List[str], overwrite: bool = False) -> int:
         date_str = date.strftime("%Y-%m-%d")
 
         # ── Stage 1: quick prescreen via aggregation query ────────────────
@@ -260,12 +261,30 @@ class BackfillEngine:
                 "score":                          entry_score(f),
                 "open_ge_close_last_3_days":      f.open_ge_close_last_3_days,
                 "close_in_top_25pct_range":       f.close_in_top_25pct_range,
+                "close_below_ema21_2d_ago":       f.close_below_ema21_2d_ago,
+                "ret_5d":                         f.ret_5d,
+                "ret_10d":                        f.ret_10d,
+                "ret_20d":                        f.ret_20d,
+                "pct_from_20d_high":              f.pct_from_20d_high,
+                "close_position_in_range":       f.close_position_in_range,
+                "recent_dip_depth_atr":           f.recent_dip_depth_atr,
+                "ema21_slope_10d":                f.ema21_slope_10d,
+                "ret_3d":                         f.ret_3d,
+                "ret_40d":                        f.ret_40d,
+                "ret_60d":                        f.ret_60d,
+                "pct_from_10d_high":              f.pct_from_10d_high,
+                "close_over_ma20":                f.close_over_ma20,
+                "range_pct_5d":                   f.range_pct_5d,
+                "volume_ratio_5d":                f.volume_ratio_5d,
+                "avg_dollar_vol_5d":              f.avg_dollar_vol_5d,
+                "volume_trend_5d_20d":           f.volume_trend_5d_20d,
+                "dvol_ratio_5d_20d":              f.dvol_ratio_5d_20d,
                 "passed_strict_filters":          strict_flags.get(sym, False),
                 **labels,
             })
 
         if rows:
-            self._batch_insert(rows)
+            self._batch_insert(rows, overwrite=overwrite)
         return len(rows)
 
     # ── Stage 1 prescreen via aggregation query ───────────────────────────────
@@ -505,8 +524,13 @@ class BackfillEngine:
         finally:
             con.close()
 
-    def _batch_insert(self, rows: list) -> None:
-        """Insert a list of row dicts into signal_outcomes (skip duplicates)."""
+    def _batch_insert(self, rows: list, overwrite: bool = False) -> None:
+        """Insert a list of row dicts into signal_outcomes.
+
+        overwrite=False: skip existing rows (DO NOTHING) — safe for incremental runs.
+        overwrite=True:  replace existing rows (DO UPDATE SET) — use when recomputing
+                         after signal logic or label parameters have changed.
+        """
         df = pd.DataFrame(rows)
 
         # Ensure all expected columns are present (fill missing with None)
@@ -517,6 +541,11 @@ class BackfillEngine:
             "range_pct_15d", "volume_ratio", "rs_percentile",
             "signal_pullback_reclaim", "signal_consolidation_breakout",
             "score", "open_ge_close_last_3_days", "close_in_top_25pct_range",
+                "close_below_ema21_2d_ago",
+            "ret_5d", "ret_10d", "ret_20d", "pct_from_20d_high",
+            "close_position_in_range", "recent_dip_depth_atr", "ema21_slope_10d",
+            "ret_3d", "ret_40d", "ret_60d", "pct_from_10d_high", "close_over_ma20", "range_pct_5d",
+            "volume_ratio_5d", "avg_dollar_vol_5d", "volume_trend_5d_20d", "dvol_ratio_5d_20d",
             "passed_strict_filters",
             "entry_price",
             "fwd_ret_d5", "fwd_ret_d10", "fwd_ret_d15", "fwd_ret_d20",
@@ -532,6 +561,15 @@ class BackfillEngine:
 
         df = df[expected_cols]
 
+        pk_cols = {"scan_date", "symbol", "strategy_variant"}
+        update_cols = [c for c in expected_cols if c not in pk_cols]
+
+        if overwrite:
+            set_clause = ", ".join(f"{c} = excluded.{c}" for c in update_cols)
+            conflict_action = f"DO UPDATE SET {set_clause}"
+        else:
+            conflict_action = "DO NOTHING"
+
         con = duckdb.connect(str(DB_PATH))
         try:
             # Register without index so DuckDB doesn't get an extra column (pandas index)
@@ -540,7 +578,7 @@ class BackfillEngine:
             con.execute(f"""
                 INSERT INTO signal_outcomes ({cols})
                 SELECT {cols} FROM insert_df
-                ON CONFLICT (scan_date, symbol, strategy_variant) DO NOTHING
+                ON CONFLICT (scan_date, symbol, strategy_variant) {conflict_action}
             """)
             con.unregister("insert_df")
         finally:

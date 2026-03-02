@@ -43,6 +43,30 @@ CREATE TABLE IF NOT EXISTS signal_outcomes (
     -- Features that are filters in production but stored raw here
     open_ge_close_last_3_days BOOLEAN,
     close_in_top_25pct_range  BOOLEAN,
+    close_below_ema21_2d_ago  BOOLEAN,
+
+    -- Extra ML features (momentum, structure, pullback)
+    ret_5d               DOUBLE,
+    ret_10d              DOUBLE,
+    ret_20d              DOUBLE,
+    pct_from_20d_high    DOUBLE,
+    close_position_in_range DOUBLE,
+    recent_dip_depth_atr DOUBLE,
+    ema21_slope_10d      DOUBLE,
+
+    -- Price short/long term
+    ret_3d               DOUBLE,
+    ret_40d              DOUBLE,
+    ret_60d              DOUBLE,
+    pct_from_10d_high    DOUBLE,
+    close_over_ma20      DOUBLE,
+    range_pct_5d         DOUBLE,
+
+    -- Volume short/long term
+    volume_ratio_5d      DOUBLE,
+    avg_dollar_vol_5d    DOUBLE,
+    volume_trend_5d_20d  DOUBLE,
+    dvol_ratio_5d_20d    DOUBLE,
 
     -- Provenance: would production filters have selected this?
     passed_strict_filters BOOLEAN,
@@ -85,14 +109,41 @@ _CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_so_variant   ON signal_outcomes (strategy_variant);",
 ]
 
+# New columns added after initial schema (for migration on existing DBs)
+_ADD_COLUMNS_SQL = [
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS close_below_ema21_2d_ago BOOLEAN;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS ret_5d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS ret_10d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS ret_20d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS pct_from_20d_high DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS close_position_in_range DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS recent_dip_depth_atr DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS ema21_slope_10d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS ret_3d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS ret_40d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS ret_60d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS pct_from_10d_high DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS close_over_ma20 DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS range_pct_5d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS volume_ratio_5d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS avg_dollar_vol_5d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS volume_trend_5d_20d DOUBLE;",
+    "ALTER TABLE signal_outcomes ADD COLUMN IF NOT EXISTS dvol_ratio_5d_20d DOUBLE;",
+]
+
 
 def init_outcomes_table() -> None:
-    """Create signal_outcomes table (and indexes) in market.duckdb if absent."""
+    """Create signal_outcomes table (and indexes) in market.duckdb if absent. Adds any new columns if table exists."""
     con = duckdb.connect(str(DB_PATH))
     try:
         con.execute(_CREATE_TABLE_SQL)
         for sql in _CREATE_INDEXES_SQL:
             con.execute(sql)
+        for sql in _ADD_COLUMNS_SQL:
+            try:
+                con.execute(sql)
+            except Exception:
+                pass  # column may already exist on older DuckDB
     finally:
         con.close()
     print(f"signal_outcomes table ready in {DB_PATH}")

@@ -41,7 +41,7 @@ uv run python scripts/backfill_signals.py
 
 The main scanner runs a two-stage pipeline:
 
-1. **Stage 1 (prescreen):** Reads all NYSE+NASDAQ symbols from `src/utils/universe.py`. For each symbol, checks minimum price (default $8) and 20-day average dollar volume (default $20M). Top 800 by dollar volume pass to Stage 2.
+1. **Stage 1 (prescreen):** Reads all NYSE+NASDAQ+AMEX equity symbols from `src/utils/universe.py` (sourced from the nasdaqtrader.com public symbol directory — a data service covering all US-listed equities, not Nasdaq stocks only). For each symbol, checks minimum price (default $8) and 20-day average dollar volume (default $20M). Top 800 by dollar volume pass to Stage 2.
 
 2. **Stage 2 (signals + position management):** Computes full `FeatureRow` for each candidate via `src/analysis/features.py`, applies entry signal detection (`src/analysis/signals.py`), then strict filters. Results are ranked by `entry_score()` and the top N (default 15) are saved to `outputs/YYYY-MM-DD/entry_candidates.csv`. Relative Strength vs SPY (126-day percentile rank) is computed and included in scoring.
 

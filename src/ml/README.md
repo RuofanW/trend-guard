@@ -21,13 +21,19 @@ Generates labeled training data from historical scanner runs. The pipeline re-ru
 ## End-to-End Data Flow
 
 ```
-NasdaqTrader (live URL)
+Daily scanner (src/scanner.py)
+  └─ universe: NYSE + NASDAQ + AMEX equities, loaded from the
+     nasdaqtrader.com symbol directory (a public data service
+     that covers all US-listed equities, not Nasdaq-only)
+        │  yfinance → DuckDB (ohlcv_daily + meta_symbol)
+        ▼
+data/market.duckdb  (ohlcv_daily table, meta_symbol populated)
         │
         ▼
-scripts/fetch_history.py          ← prerequisite: loads OHLCV back to --start date
-        │  yfinance → DuckDB
+scripts/fetch_history.py          ← extends history for symbols already in
+        │  yfinance → DuckDB        meta_symbol back to --start date
         ▼
-data/market.duckdb  (ohlcv_daily table)
+data/market.duckdb  (ohlcv_daily table, history complete)
         │
         ▼
 scripts/backfill_signals.py
@@ -58,6 +64,8 @@ ml_data.parquet  (feature snapshot + labels, ready for model training)
 ## Prerequisite: Loading Historical OHLCV
 
 The backfill engine reads entirely from DuckDB — it never calls yfinance directly. `fetch_history.py` must be run first (and can be re-run at any time) to ensure the database is complete and up-to-date.
+
+`fetch_history.py` operates on symbols already registered in `meta_symbol` — it extends their history, it does not discover new symbols. Symbols enter `meta_symbol` when the daily scanner runs (`src/scanner.py`). The scanner's universe covers **NYSE, NASDAQ, and AMEX equities** (no ETFs, warrants, units, rights, or indices), sourced from the nasdaqtrader.com public symbol directory — a data service operated by Nasdaq that covers all US-listed equities, not Nasdaq stocks only.
 
 ```bash
 # Detect and fill all gaps back to 2022-01-01 through today (default)
@@ -104,7 +112,7 @@ uv run python scripts/backfill_signals.py \
     --start 2022-01-01 --variant tight_vol \
     --profit-target-atr 1.5 --stop-atr 1.0
 
-# Recover signals silently dropped by a previous run with --end too close to today
+# Recompute all signals and labels (e.g. after changing signal logic or label params)
 uv run python scripts/backfill_signals.py --start 2022-01-01 --force
 
 # Print table summary and exit
@@ -120,7 +128,7 @@ uv run python scripts/backfill_signals.py --export ml_data.parquet
 
 **Idempotency:** Dates already present in `signal_outcomes` for the given `--variant` are skipped automatically. The run is safe to interrupt and resume.
 
-**`--force`:** Bypasses the already-processed check so every date in the range is re-examined. Safe to use: existing rows are never overwritten (`ON CONFLICT DO NOTHING`), but previously-skipped signals are inserted if forward data is now available. Use this to recover from a prior run that used `--end today`.
+**`--force`:** Bypasses the already-processed date check AND overwrites existing rows (`ON CONFLICT DO UPDATE SET`). Use this when signal logic or label computation has changed and you need to refresh stored values. Previously-skipped signals (e.g. from a prior run with `--end` too close to today) are also inserted.
 
 ---
 
@@ -137,7 +145,7 @@ For each trading date `d`:
 5. **Relaxed filter** — Broad pass/fail using relaxed ATR bounds and volume thresholds (see table below). Captures the full feature distribution for ML training, not just high-confidence signals.
 6. **Strict filter flag** — `passed_strict_filters` is computed with production parameters (re-evaluates the ATR-based dip check from raw OHLCV with strict bounds). This allows the ML model to learn which relaxed-pass signals would also pass production.
 7. **Label computation** — `db_download_batch()` fetches `int(max_hold_days * 7/5) + 10` calendar days forward (38 days for the default 20-day hold). Entry price is D+1 open (realistic execution). `compute_labels()` simulates the exit. Signals with no D+1 bar (scan date too recent) are silently skipped; this is why `--end` defaults to `today − int(max_hold*7/5+10)`.
-8. **Batch insert** — All rows for the date are inserted into `signal_outcomes` via `ON CONFLICT DO NOTHING`. Dates with any existing rows are skipped on re-run; pass `force=True` to `run()` (or `--force` on the CLI) to re-examine such dates and insert any signals that were previously skipped.
+8. **Batch insert** — All rows for the date are inserted into `signal_outcomes`. Without `--force`: `ON CONFLICT DO NOTHING` (existing rows preserved; new signals added). With `--force`: `ON CONFLICT DO UPDATE SET` (all columns overwritten with freshly recomputed values). Pass `force=True` to `run()` or use `--force` on the CLI.
 
 ### Relaxed vs. Strict Filter Parameters
 
